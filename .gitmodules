@@ -1,0 +1,11 @@
+[submodule "yoga"]
+    path = libc/yoga
+    url = https://github.com/react/yoga
+
+[submodule "harfbuzz"]
+    path = libc/harfbuzz
+    url = https://github.com/harfbuzz/harfbuzz
+
+[submodule "fribidi"]
+    path = libc/fribidi
+    url = https://github.com/fribidi/fribidi

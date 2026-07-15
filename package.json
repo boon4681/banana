@@ -1,0 +1,7 @@
+{
+    "name": "banana",
+    "scripts": {
+        "prepare": "node ./prepare.mjs",
+        "test": "node ./test.mjs"
+    }
+}
