@@ -106,6 +106,12 @@ _request_close :: proc() {
 }
 
 @(private = "file")
+_set_title :: proc(title: string) {
+    cs := strings.clone_to_cstring(title, context.temp_allocator)
+    glfw.SetWindowTitle(_active.handle, cs)
+}
+
+@(private = "file")
 _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
     _active = cast(^GLFW_State)(state)
     glfw.SetWindowUserPointer(_active.handle, ptr)
@@ -322,6 +328,7 @@ PLATFORM_GLFW :: Platform_Interface{
     poll_size           = _poll_size,
     content_scale       = _content_scale,
     request_close       = _request_close,
+    set_title           = _set_title,
     set_window_user_ptr = _set_window_user_ptr,
     clipboard_get       = _clipboard_get,
     clipboard_set       = _clipboard_set,

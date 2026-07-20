@@ -21,5 +21,101 @@
     },
     "[glsl]": {
         "editor.defaultFormatter": "raczzalan.webgl-glsl-editor"
+    },
+    "highlight.regex.workspace.regexes": [
+        {
+            "name": "banana-style",
+            "description": "Syntax highlighting for *.style files (name :: Type)",
+            "filenameRegex": ".*\\.style$",
+            "regexes": [
+                {
+                    "regex": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(::)",
+                    "regexFlag": "gm",
+                    "decorations": [
+                        {
+                            "index": 1,
+                            "color": "#9CDCFE"
+                        },
+                        {
+                            "index": 2,
+                            "color": "#C586C0",
+                            "fontWeight": "bold"
+                        }
+                    ]
+                },
+                {
+                    "regex": "(?<=::.*)([A-Za-z_][A-Za-z0-9_]*)\\s*:(?!:)",
+                    "regexFlag": "gm",
+                    "decorations": [
+                        {
+                            "index": 1,
+                            "color": "#9CDCFE",
+                            "fontStyle": "italic"
+                        }
+                    ]
+                },
+                {
+                    "regex": "(?<=(?:::|[:,])\\s*)([A-Za-z_][A-Za-z0-9_.]*)\\b(?!\\s*:)",
+                    "regexFlag": "gm",
+                    "decorations": [
+                        {
+                            "index": 1,
+                            "color": "#4EC9B0"
+                        }
+                    ]
+                },
+                {
+                    "regex": "(=)\\s*([A-Za-z_][A-Za-z0-9_.]*)",
+                    "regexFlag": "gm",
+                    "decorations": [
+                        {
+                            "index": 1,
+                            "color": "#C586C0"
+                        },
+                        {
+                            "index": 2,
+                            "color": "#CE9178"
+                        }
+                    ]
+                },
+                {
+                    "regex": "(-?\\b\\d+(?:\\.\\d+)?)(px|%)?",
+                    "regexFlag": "gm",
+                    "decorations": [
+                        {
+                            "index": 1,
+                            "color": "#B5CEA8"
+                        },
+                        {
+                            "index": 2,
+                            "color": "#CE9178"
+                        }
+                    ]
+                },
+                {
+                    "regex": "\"(?:[^\"\\\\]|\\\\.)*\"",
+                    "regexFlag": "gm",
+                    "decorations": [
+                        {
+                            "color": "#CE9178"
+                        }
+                    ]
+                },
+                {
+                    "regex": "//[^\\r\\n]*",
+                    "regexFlag": "gm",
+                    "decorations": [
+                        {
+                            "color": "#6A9955",
+                            "fontStyle": "italic"
+                        }
+                    ]
+                }
+            ],
+            "active": true
+        }
+    ],
+    "[plaintext]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
     }
 }

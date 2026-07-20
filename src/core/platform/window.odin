@@ -216,6 +216,12 @@ close :: proc(w: ^Window) {
     PLATFORM.request_close()
 }
 
+set_title :: proc(w: ^Window, title: string) {
+    if w == nil do return
+    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_title(title)
+}
+
 free :: proc(w: ^Window) {
     if w == nil do return
     make_current(w)

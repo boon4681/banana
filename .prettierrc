@@ -1,5 +1,6 @@
 {
     "plugins": [
-        "./fmt/index.mjs"
+        "./fmt/index.mjs",
+        "./fmt/style.mjs"
     ]
 }

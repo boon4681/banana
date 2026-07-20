@@ -26,6 +26,7 @@ Platform_Interface :: struct #all_or_none {
     poll_size:           proc() -> (w, h: int),
     content_scale:       proc() -> f32, // browser devicePixelRatio equivalent
     request_close:       proc(),
+    set_title:           proc(title: string),
     set_window_user_ptr: proc(state: rawptr, ptr: rawptr),
     clipboard_get:       proc(allocator: runtime.Allocator) -> string,
     clipboard_set:       proc(text: string),
