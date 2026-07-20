@@ -5,6 +5,8 @@ import YG "src:yoga"
 import "src:core/node"
 import "src:core/platform"
 
+Node :: node.BaseNode
+
 Deferred :: struct {
     callback: proc(state: rawptr),
     state:    rawptr
@@ -14,10 +16,10 @@ Deferred :: struct {
 _deferred: [dynamic]Deferred
 
 @(private)
-_pending_free: [dynamic]^node.Node
+_pending_free: [dynamic]^Node
 
 @(private)
-_last_avail: map[^node.Node][2]f32
+_last_avail: map[^Node][2]f32
 
 Defer :: proc(callback: proc(state: rawptr), state: rawptr = nil) {
     append(&_deferred, Deferred{callback = callback, state = state})
@@ -25,8 +27,8 @@ Defer :: proc(callback: proc(state: rawptr), state: rawptr = nil) {
 
 scheduler_setup :: proc() {
     _deferred = make([dynamic]Deferred)
-    _pending_free = make([dynamic]^node.Node)
-    _last_avail = make(map[^node.Node][2]f32)
+    _pending_free = make([dynamic]^Node)
+    _last_avail = make(map[^Node][2]f32)
 }
 
 scheduler_shutdown :: proc() {
@@ -35,7 +37,7 @@ scheduler_shutdown :: proc() {
     delete(_last_avail)
 }
 
-update :: proc(root: ^node.Node, avail_w, avail_h: f32) {
+update :: proc(root: ^Node, avail_w, avail_h: f32) {
     run_deferred()
     flush_pending_free()
 
@@ -55,14 +57,14 @@ update :: proc(root: ^node.Node, avail_w, avail_h: f32) {
 }
 
 @(private)
-notify_layout :: proc(n: ^node.Node) {
+notify_layout :: proc(n: ^Node) {
     if n.freed do return
     if n.on_layout != nil do n.on_layout(n)
     for c in n.children do notify_layout(c)
 }
 
 @(private)
-process :: proc(n: ^node.Node) {
+process :: proc(n: ^Node) {
     if n.freed do return
     if n.process != nil do n.process(n)
     for c in n.children do process(c)
@@ -85,19 +87,19 @@ flush_pending_free :: proc() {
 }
 
 @(private)
-cache_rects :: proc(n: ^node.Node, ox, oy: f32) {
+cache_rects :: proc(n: ^Node, ox, oy: f32) {
     n.rect = n->get_rect(.Border)
-    n.rect.x := ox + lx
-    n.rect.y := oy + ly
-    
-    for c in n.children do cache_rects(c, ax, ay)
+    n.rect.x += ox
+    n.rect.y += oy
+
+    for c in n.children do cache_rects(c, n.rect.x, n.rect.y)
 }
 
-get_window :: proc(n: ^node.Node) -> ^window.Window {
-    return cast(^window.Window)(n.window)
+get_window :: proc(n: ^Node) -> ^platform.Window {
+    return cast(^platform.Window)(n.window)
 }
 
-awake_window :: proc(w: ^window.Window) {
+awake_window :: proc(w: ^platform.Window) {
     w.awaken = true
     w.root.window = w
     _awake_node(w.root)
@@ -106,7 +108,7 @@ awake_window :: proc(w: ^window.Window) {
 // This get auto propagate when add child in node if node is setup properly
 // This cannot be access outside engine cuz every node must have window ctx
 @(private="file")
-_awake_node :: proc(n: ^node.Node){
+_awake_node :: proc(n: ^Node){
     if n == nil || n.awaken do return
     for c in n.children {
         c._internal_propagate_awake = _awake_node
@@ -118,9 +120,9 @@ _awake_node :: proc(n: ^node.Node){
 }
 
 @(private="file")
-_queue_free_node :: proc(self: ^node.Node) -> node.NodeError {
-    if self == nil || self.queued_free do return node.NodeError.None
+_queue_free_node :: proc(self: ^Node) -> node.Node_Error {
+    if self == nil || self.queued_free do return node.Node_Error.None
     self.queued_free = true
     append(&_pending_free, self)
-    return node.NodeError.None
+    return node.Node_Error.None
 }

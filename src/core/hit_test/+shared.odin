@@ -5,7 +5,7 @@ import "src:core/node"
 import "src:core/events"
 
 @(private)
-Node :: node.Node
+Node :: node.BaseNode
 
 @(private)
 Rect :: common.Rect

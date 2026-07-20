@@ -4,8 +4,6 @@ import "base:runtime"
 import "src:core/node"
 import "src:core/events"
 
-Node :: node.Node
-
 Input_State :: struct {
     root:     ^Node,
     hovered:  ^Node, // node currently under the cursor

@@ -151,6 +151,11 @@ Size :: struct {
     height: f32,
 }
 
+Style_Set_Proc           :: #type proc "c" (node: NodeRef, v: f32)
+Style_Set_Auto_Proc      :: #type proc "c" (node: NodeRef)
+Style_Set_Edge_Proc      :: #type proc "c" (node: NodeRef, edge: Edge, v: f32)
+Style_Set_Edge_Auto_Proc :: #type proc "c" (node: NodeRef, edge: Edge)
+
 MeasureFunc :: #type proc "c" (
 	node: NodeRef,
 	width: f32,

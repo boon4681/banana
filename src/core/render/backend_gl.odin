@@ -164,6 +164,8 @@ _init :: proc(
     curve_texs: [1]u32
     gl.GenTextures(1, &curve_texs[0])
     _state.curve_tex = curve_texs[0]
+    
+    gl.BindBuffer(gl.TEXTURE_BUFFER, _state.curve_buf)
     gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
     gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RG32F, _state.curve_buf)
 

@@ -84,6 +84,37 @@ Segment_Properties :: struct {
 
 Blob_Destroy_Proc :: proc "c" (user_data: rawptr)
 
+Draw_Funcs :: distinct rawptr
+
+Draw_State :: struct {
+	path_open:    Bool,
+	path_start_x: f32,
+	path_start_y: f32,
+	current_x:    f32,
+	current_y:    f32,
+	reserved:     [7]u32,
+}
+
+Font_Extents :: struct {
+	ascender:  Position,
+	descender: Position,
+	line_gap:  Position,
+	reserved:  [9]Position,
+}
+
+Glyph_Extents :: struct {
+	x_bearing: Position,
+	y_bearing: Position,
+	width:     Position,
+	height:    Position,
+}
+
+Draw_Move_To_Func :: proc "c" (dfuncs: Draw_Funcs, draw_data: rawptr, st: ^Draw_State, to_x, to_y: f32, user_data: rawptr)
+Draw_Line_To_Func :: proc "c" (dfuncs: Draw_Funcs, draw_data: rawptr, st: ^Draw_State, to_x, to_y: f32, user_data: rawptr)
+Draw_Quadratic_To_Func :: proc "c" (dfuncs: Draw_Funcs, draw_data: rawptr, st: ^Draw_State, control_x, control_y, to_x, to_y: f32, user_data: rawptr)
+Draw_Cubic_To_Func :: proc "c" (dfuncs: Draw_Funcs, draw_data: rawptr, st: ^Draw_State, control1_x, control1_y, control2_x, control2_y, to_x, to_y: f32, user_data: rawptr)
+Draw_Close_Path_Func :: proc "c" (dfuncs: Draw_Funcs, draw_data: rawptr, st: ^Draw_State, user_data: rawptr)
+
 @(default_calling_convention = "c", link_prefix = "hb_")
 foreign hb {
 	blob_create :: proc(data: [^]u8, length: c.uint, mode: Memory_Mode, user_data: rawptr, destroy: Blob_Destroy_Proc) -> Blob ---
@@ -119,4 +150,17 @@ foreign hb {
 
 	unicode_funcs_get_default :: proc() -> Unicode_Funcs ---
 	unicode_script :: proc(funcs: Unicode_Funcs, unicode: Codepoint) -> Script ---
+
+	draw_funcs_create :: proc() -> Draw_Funcs ---
+	draw_funcs_destroy :: proc(dfuncs: Draw_Funcs) ---
+	draw_funcs_make_immutable :: proc(dfuncs: Draw_Funcs) ---
+	draw_funcs_set_move_to_func :: proc(dfuncs: Draw_Funcs, func: Draw_Move_To_Func, user_data: rawptr, destroy: Blob_Destroy_Proc) ---
+	draw_funcs_set_line_to_func :: proc(dfuncs: Draw_Funcs, func: Draw_Line_To_Func, user_data: rawptr, destroy: Blob_Destroy_Proc) ---
+	draw_funcs_set_quadratic_to_func :: proc(dfuncs: Draw_Funcs, func: Draw_Quadratic_To_Func, user_data: rawptr, destroy: Blob_Destroy_Proc) ---
+	draw_funcs_set_cubic_to_func :: proc(dfuncs: Draw_Funcs, func: Draw_Cubic_To_Func, user_data: rawptr, destroy: Blob_Destroy_Proc) ---
+	draw_funcs_set_close_path_func :: proc(dfuncs: Draw_Funcs, func: Draw_Close_Path_Func, user_data: rawptr, destroy: Blob_Destroy_Proc) ---
+
+	font_draw_glyph :: proc(font: Font, glyph: Codepoint, dfuncs: Draw_Funcs, draw_data: rawptr) ---
+	font_get_h_extents :: proc(font: Font, extents: ^Font_Extents) -> Bool ---
+	font_get_glyph_extents :: proc(font: Font, glyph: Codepoint, extents: ^Glyph_Extents) -> Bool ---
 }

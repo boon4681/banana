@@ -8,15 +8,12 @@ import "src:core/painter"
 import "src:core/events"
 import YG "src:yoga"
 
-MeasureMode        :: YG.MeasureMode
-
-MeasureCallback    :: proc(self: ^Node, w: f32, w_mode: MeasureMode, h: f32, h_mode: MeasureMode) -> (out_w, out_h: f32)
-
-ClipMode           :: painter.ClipMode
-
-UNDEFINED          :: YG.UNDEFINED
-INFINITY           :: YG.INFINITY
-NEG_INFINITY       :: YG.NEG_INFINITY
+MeasureMode     :: YG.MeasureMode
+MeasureCallback :: proc(self: ^Node, w: f32, w_mode: MeasureMode, h: f32, h_mode: MeasureMode) -> (out_w, out_h: f32)
+ClipMode        :: painter.ClipMode
+UNDEFINED       :: YG.UNDEFINED
+INFINITY        :: YG.INFINITY
+NEG_INFINITY    :: YG.NEG_INFINITY
 
 Node_Error :: enum {
     None,
@@ -28,16 +25,17 @@ Node_Error_Map := [Node_Error]string{
     .NODE_PANIC_NOT_AWAKE = "error node not awake properly",
 }
 
-Node :: struct {
+BaseNode :: struct {
     raw:      YG.NodeRef,
     window:   rawptr,
     key:      string,
-    parent:   ^Node,
-    children: [dynamic]^Node,
+    parent:   ^BaseNode,
+    children: [dynamic]^BaseNode,
 
-    rect:      common.Rect,
-    transform: common.Transform,
-    data:      rawptr,
+    rect:            common.Rect,
+    transform:       common.Transform,
+    data:            rawptr,
+    _internal_style: rawptr, // must not assign directly from node initialization; it should be assigned via Set_Style
 
     z_index:                  i32,
     creates_stacking_context: bool,
@@ -49,29 +47,34 @@ Node :: struct {
 
     bus: events.Bus,
 
-    draw:    proc(self: ^Node), // `draw` is function that user override to render things. Get the active painter with painter.get().
-    process: proc(self: ^Node), // this is update method for node logic in user space
+    draw:    proc(self: ^BaseNode), // `draw` is function that user override to render things. Get the active painter with painter.get().
+    process: proc(self: ^BaseNode), // this is update method for node logic in user space
 
-    add:            proc(self: ^Node, kids: ..^Node) -> ^Node,
-    compute_layout: proc(self: ^Node, width: f32 = UNDEFINED, height: f32 = UNDEFINED, dir: YG.Direction = .LTR),
-    find:           proc(self: ^Node, path: string) -> ^Node,
-    get_rect:       proc(self: ^Node, which: RectType = .Border) -> common.Rect,
-    free:           proc(self: ^Node),
-    queue_free:     proc(self: ^Node) -> Node_Error,
-    apply_measure:  proc(self: ^Node),
+    add:            proc(self: ^BaseNode, kids: ..^BaseNode) -> ^BaseNode,
+    compute_layout: proc(self: ^BaseNode, width: f32 = UNDEFINED, height: f32 = UNDEFINED, dir: YG.Direction = .LTR),
+    find:           proc(self: ^BaseNode, path: string) -> ^BaseNode,
+    get_rect:       proc(self: ^BaseNode, which: RectType = .Border) -> common.Rect,
+    free:           proc(self: ^BaseNode),
+    queue_free:     proc(self: ^BaseNode) -> Node_Error,
+    apply_measure:  proc(self: ^BaseNode),
     measure:        MeasureCallback,
 
-    on:        proc(n: ^Node, type: string, cb: proc(s: ^events.Signal), capture := false, once := false) -> uint,
-    off:       proc(n: ^Node, type: string, cb: proc(s: ^events.Signal)),
-    on_free:   proc(self: ^Node), // EVENT CALLBACK fired before free
-    on_layout: proc(self: ^Node), // EVENT CALLBACK fired before layout update
+    on:        proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal), capture := false, once := false) -> uint,
+    off:       proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal)),
+    on_free:   proc(self: ^BaseNode), // EVENT CALLBACK fired before free
+    on_layout: proc(self: ^BaseNode), // EVENT CALLBACK fired before layout update
 
     awaken:      bool,
     freed:       bool,
     queued_free: bool,
     // Internal awake is for node extend node internal setup
     // So i can do somekind of stupid polymorphism
-    _internal_propagate_awake: proc(self: ^Node),
+    _internal_propagate_awake: proc(self: ^BaseNode),
+}
+
+Node :: struct {
+    using _internal_node: BaseNode,
+    style: proc(self: ^Node) -> ^Style
 }
 
 RectType :: enum {
@@ -83,6 +86,27 @@ RectType :: enum {
 
 New :: proc(key: Maybe(string) = nil) -> ^Node {
     n := new(Node)
+    Init(n, key)
+    Set_Style(n, new(Style))
+    Init_Style(n)
+    n.style = _get_style
+    n.on_free = _free_base_style
+    return n
+}
+
+@(private="file")
+_get_style := proc(self: ^Node) -> ^Style {
+    return cast(^Style)self._internal_style
+}
+
+@(private="file")
+_free_base_style :: proc(self: ^Node) {
+    free(self._internal_style)
+}
+
+// Initializes an embedded Node in place so widget structs
+// can extend Node without re-implementing the method table wiring.
+Init :: proc(n: ^Node, key: Maybe(string) = nil) {
     n.raw = YG.NodeNew()
     if key, ok := key.?; ok do n.key = key
 
@@ -100,7 +124,6 @@ New :: proc(key: Maybe(string) = nil) -> ^Node {
     n.off = _off
 
     YG.NodeSetContext(n.raw, n)
-    return n
 }
 
 @(private="file")
@@ -130,7 +153,7 @@ _measure_trampoline :: proc "c" (
 }
 
 @(private="file")
-_node_add :: proc (self: ^Node, kids: ..^Node) -> ^Node{
+_node_add :: proc (self: ^BaseNode, kids: ..^BaseNode) -> ^BaseNode {
     for k in kids {
         k.parent = self
         YG.NodeInsertChild(self.raw, k.raw, c.size_t(len(self.children)))
@@ -155,7 +178,7 @@ _node_compute_layout :: proc(self: ^Node, width: f32 = UNDEFINED, height: f32 = 
 }
 
 @(private="file")
-_node_find :: proc(self: ^Node, path: string) -> ^Node {
+_node_find :: proc(self: ^BaseNode, path: string) -> ^BaseNode {
     p := strings.trim_prefix(path, "/")
     if p == "" do return self
 
@@ -204,12 +227,12 @@ _node_get_rect :: proc(self: ^Node, which: RectType = .Border) -> common.Rect {
 }
 
 @(private="file")
-_queue_free :: proc(self: ^Node) -> Node_Error{
+_queue_free :: proc(self: ^BaseNode) -> Node_Error{
     return Node_Error.NODE_PANIC_NOT_AWAKE
 }
 
 @(private="file")
-_node_free :: proc(self: ^Node) {
+_node_free :: proc(self: ^BaseNode) {
     if self == nil || self.freed do return
     self.freed = true
 
@@ -236,7 +259,7 @@ _off :: proc(n: ^Node, type: string, cb: proc(s: ^events.Signal)) {
 }
 
 @(private="file")
-_find_descendant_by_key :: proc(root: ^Node, key: string) -> ^Node {
+_find_descendant_by_key :: proc(root: ^BaseNode, key: string) -> ^BaseNode {
     for c in root.children {
         if c.key == key do return c
     }

@@ -3,6 +3,7 @@ package platform
 import "base:runtime"
 import "core:c"
 import "core:os"
+import "core:strings"
 import "src:core/node"
 import "src:core/painter"
 import "src:core/input"
@@ -209,6 +210,16 @@ refresh :: proc(w: ^Window) {
     make_current(w)
     sync_size(w)
     if w.on_refresh != nil do w.on_refresh(w)
+}
+
+// Saves presented frame as a PNG.
+capture :: proc(w: ^Window, path: string) -> bool {
+    if w == nil do return false
+    make_current(w)
+    data, width, height := render.RENDERER.read_pixels(render.INVALID_RENDER_TARGET, context.temp_allocator)
+    if len(data) == 0 || width <= 0 || height <= 0 do return false
+    cpath := strings.clone_to_cstring(path, context.temp_allocator)
+    return stbi.write_png(cpath, c.int(width), c.int(height), 4, raw_data(data), c.int(width * 4)) != 0
 }
 
 close :: proc(w: ^Window) {

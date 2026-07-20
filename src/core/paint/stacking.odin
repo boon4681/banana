@@ -5,14 +5,8 @@ import "core:slice"
 import "src:core/node"
 import "src:core/common"
 
-Node :: node.Node
+Node :: node.BaseNode
 
-// Stacking-context tree per CSS 2.1 Appendix E (+ flexbox z-index rules).
-// z-index hoisting reorders whole groups; a hoisted group stays inside its
-// ancestors' clips and transforms. Painter and hit testing both consume this.
-// Paint order, with `clips` then node's transform wrapping everything:
-// node's background, then (gated by node's own clip_mode) neg contexts,
-// in-flow descendants in tree order, pos contexts.
 Stacking_Context :: struct {
     node: ^Node,
 	// Clipping in-flow ancestors between the parent context

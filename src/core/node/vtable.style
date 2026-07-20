@@ -1,0 +1,66 @@
+﻿// <name>          :: <type_value>
+direction           :: Direction
+flex_direction      :: FlexDirection
+justify_content     :: Justify
+align_content       :: Align
+align_items         :: Align
+align_self          :: Align
+position_type       :: Position
+wrap                :: Wrap
+display             :: Display
+box_sizing          :: BoxSizing
+flex                :: f32
+flex_grow           :: f32
+flex_shrink         :: f32
+aspect_ratio        :: f32
+// <name>          :: <type_value>, <type_value>
+width               :: f32, u: unit = px
+height              :: f32, u: unit = px
+min_width           :: f32, u: unit = px
+min_height          :: f32, u: unit = px
+max_width           :: f32, u: unit = px
+max_height          :: f32, u: unit = px
+flex_basis          :: f32, u: unit = px
+margin_left         :: f32, u: unit = px
+margin_top          :: f32, u: unit = px
+margin_right        :: f32, u: unit = px
+margin_bottom       :: f32, u: unit = px
+margin_start        :: f32, u: unit = px
+margin_end          :: f32, u: unit = px
+margin_horizontal   :: f32, u: unit = px
+margin_vertical     :: f32, u: unit = px
+margin_all          :: f32, u: unit = px
+padding_left        :: f32, u: unit = px
+padding_top         :: f32, u: unit = px
+padding_right       :: f32, u: unit = px
+padding_bottom      :: f32, u: unit = px
+padding_start       :: f32, u: unit = px
+padding_end         :: f32, u: unit = px
+padding_horizontal  :: f32, u: unit = px
+padding_vertical    :: f32, u: unit = px
+padding_all         :: f32, u: unit = px
+position_left       :: f32, u: unit = px
+position_top        :: f32, u: unit = px
+position_right      :: f32, u: unit = px
+position_bottom     :: f32, u: unit = px
+position_start      :: f32, u: unit = px
+position_end        :: f32, u: unit = px
+position_horizontal :: f32, u: unit = px
+position_vertical   :: f32, u: unit = px
+position_all        :: f32, u: unit = px
+border_left         :: f32
+border_top          :: f32
+border_right        :: f32
+border_bottom       :: f32
+border_start        :: f32
+border_end          :: f32
+border_horizontal   :: f32
+border_vertical     :: f32
+border_all          :: f32
+gap_column          :: f32, u: unit = px
+gap_row             :: f32, u: unit = px
+gap_all             :: f32, u: unit = px
+color               :: Color
+font_size           :: f32
+line_height         :: f32
+font                :: ^Font
