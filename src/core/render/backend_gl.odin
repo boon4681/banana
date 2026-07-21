@@ -21,12 +21,17 @@ GL_State :: struct {
     stencil_depth:  int,
     textures:       [dynamic]GL_Texture,
     render_targets: [dynamic]GL_RT,
+    meshes:         [dynamic]GL_Glyph_Mesh,
 
     glyph_program:                   u32,
     glyph_vao, glyph_vbo, glyph_ibo: u32,
+    glyph_meshes:                    [dynamic]GL_Glyph_Mesh,
     curve_buf, curve_tex:            u32,
     curves_version:                  u64,
     locyph_resolution:               i32,
+    msdf_program:                    u32,
+    msdf_loc_resolution:             i32,
+    msdf_loc_range:                  i32,
 }
 
 @(private="file")
@@ -45,6 +50,12 @@ GL_Texture :: struct {
     height: int,
 }
 
+@(private="file")
+GL_Glyph_Mesh :: struct {
+    vao, vbo, ibo: u32,
+    index_count:   int,
+}
+
 @(private="file", thread_local)
 _state: ^GL_State
 
@@ -58,6 +69,10 @@ FS_SOURCE :: string(#load("shaders/gl_quad.frag"))
 GLYPH_VS_SOURCE :: string(#load("shaders/gl_glyph.vert"))
 @(private="file")
 GLYPH_FS_SOURCE :: string(#load("shaders/gl_glyph.frag"))
+@(private="file")
+MSDF_VS_SOURCE :: string(#load("shaders/gl_msdf.vert"))
+@(private="file")
+MSDF_FS_SOURCE :: string(#load("shaders/gl_msdf.frag"))
 
 @(private="file")
 _state_size :: proc() -> int { return size_of(GL_State) }
@@ -94,6 +109,8 @@ _init :: proc(
     _state.swapchain_h = height
     _state.textures = make([dynamic]GL_Texture, 0, allocator)
     _state.render_targets = make([dynamic]GL_RT, 0, allocator)
+    _state.meshes = make([dynamic]GL_Glyph_Mesh, 0, allocator)
+    _state.glyph_meshes = make([dynamic]GL_Glyph_Mesh, 0, allocator)
 
     if !render.make_context(render.state, options) {
         panic("render backend 'gl': glue.make_context failed")
@@ -138,6 +155,15 @@ _init :: proc(
     _state.glyph_program = glyph_program
     _state.locyph_resolution = gl.GetUniformLocation(glyph_program, "u_resolution")
 
+    msdf_program, msdf_ok := gl.load_shaders_source(MSDF_VS_SOURCE, MSDF_FS_SOURCE)
+    if !msdf_ok {
+        compile_msg, _, link_msg, _ := gl.get_last_error_messages()
+        panic(fmt.tprintf("render backend 'gl': MSDF shader compile failed\n%s\n%s", compile_msg, link_msg))
+    }
+    _state.msdf_program = msdf_program
+    _state.msdf_loc_resolution = gl.GetUniformLocation(msdf_program, "u_resolution")
+    _state.msdf_loc_range = gl.GetUniformLocation(msdf_program, "u_px_range")
+
     glyph_vaos: [1]u32
     gl.GenVertexArrays(1, &glyph_vaos[0])
     _state.glyph_vao = glyph_vaos[0]
@@ -164,7 +190,7 @@ _init :: proc(
     curve_texs: [1]u32
     gl.GenTextures(1, &curve_texs[0])
     _state.curve_tex = curve_texs[0]
-    
+
     gl.BindBuffer(gl.TEXTURE_BUFFER, _state.curve_buf)
     gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
     gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RG32F, _state.curve_buf)
@@ -174,6 +200,7 @@ _init :: proc(
     gl.Enable(gl.BLEND)
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     gl.Enable(gl.STENCIL_TEST)
+    if options.msaa_samples > 1 do gl.Enable(gl.MULTISAMPLE)
 }
 
 @(private="file")
@@ -187,6 +214,23 @@ _shutdown :: proc() {
     gl.DeleteTextures(1, &del_ctex[0])
     if _state.program != 0 do gl.DeleteProgram(_state.program)
     if _state.glyph_program != 0 do gl.DeleteProgram(_state.glyph_program)
+    if _state.msdf_program != 0 do gl.DeleteProgram(_state.msdf_program)
+    for mesh in _state.glyph_meshes {
+        if mesh.vao != 0 {
+            ids := [1]u32{mesh.vao}
+            gl.DeleteVertexArrays(1, &ids[0])
+        }
+        ids := [2]u32{mesh.vbo, mesh.ibo}
+        gl.DeleteBuffers(2, &ids[0])
+    }
+    for mesh in _state.meshes {
+        if mesh.vao != 0 {
+            ids := [1]u32{mesh.vao}
+            gl.DeleteVertexArrays(1, &ids[0])
+        }
+        ids := [2]u32{mesh.vbo, mesh.ibo}
+        gl.DeleteBuffers(2, &ids[0])
+    }
     for texture in _state.textures {
         if texture.id == 0 do continue
         del := [1]u32{texture.id}
@@ -198,6 +242,8 @@ _shutdown :: proc() {
     }
     delete(_state.textures)
     delete(_state.render_targets)
+    delete(_state.glyph_meshes)
+    delete(_state.meshes)
 }
 
 @(private="file")
@@ -211,6 +257,14 @@ _clear :: proc(target: Render_Target, color: common.Color) {
 @(private="file")
 _present :: proc() {
     _state.render.present(_state.render.state)
+}
+
+// Give the driver fresh storage before each dynamic upload. This avoids
+// waiting for a previous draw that is still consuming the old buffer store.
+@(private="file")
+_stream_buffer :: proc(target: u32, size: int, data: rawptr) {
+    gl.BufferData(target, size, nil, gl.STREAM_DRAW)
+    gl.BufferSubData(target, 0, size, data)
 }
 
 @(private="file")
@@ -257,10 +311,105 @@ _draw :: proc(
 
     gl.BindVertexArray(_state.vao)
     gl.BindBuffer(gl.ARRAY_BUFFER, _state.vbo)
-    gl.BufferData(gl.ARRAY_BUFFER, len(vertices) * size_of(Vertex), &vertices[0], gl.DYNAMIC_DRAW)
+    _stream_buffer(gl.ARRAY_BUFFER, len(vertices) * size_of(Vertex), &vertices[0])
     gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, _state.ibo)
-    gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices) * size_of(u32), &indices[0], gl.DYNAMIC_DRAW)
+    _stream_buffer(gl.ELEMENT_ARRAY_BUFFER, len(indices) * size_of(u32), &indices[0])
     gl.DrawElements(gl.TRIANGLES, i32(len(indices)), gl.UNSIGNED_INT, nil)
+}
+
+@(private="file")
+_draw_mesh :: proc(
+    target: Render_Target,
+    mesh: ^Mesh,
+    vertices: []Vertex,
+    indices: []u32,
+    geometry_version: u64,
+    texture: Texture,
+    scissor: Maybe(common.Rect),
+    blend: Blend_Mode,
+) {
+    if mesh == nil do return
+
+    if mesh.idx == 0 {
+        vaos: [1]u32
+        bufs: [2]u32
+        gl.GenVertexArrays(1, &vaos[0])
+        gl.GenBuffers(2, &bufs[0])
+
+        gl.BindVertexArray(vaos[0])
+        gl.BindBuffer(gl.ARRAY_BUFFER, bufs[0])
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufs[1])
+
+        stride := i32(size_of(Vertex))
+        gl.EnableVertexAttribArray(0)
+        gl.VertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0)
+        gl.EnableVertexAttribArray(1)
+        gl.VertexAttribPointer(1, 2, gl.FLOAT, false, stride, 8)
+        gl.EnableVertexAttribArray(2)
+        gl.VertexAttribPointer(2, 4, gl.UNSIGNED_BYTE, true, stride, 16)
+
+        append(&_state.meshes, GL_Glyph_Mesh{vao = vaos[0], vbo = bufs[0], ibo = bufs[1]})
+        mesh.idx = u32(len(_state.meshes))
+    }
+
+    mi := int(mesh.idx) - 1
+    if mi < 0 || mi >= len(_state.meshes) do return
+    gm := &_state.meshes[mi]
+
+    if mesh.version != geometry_version {
+        if len(vertices) == 0 || len(indices) == 0 do return
+
+        gl.BindVertexArray(gm.vao)
+        gl.BindBuffer(gl.ARRAY_BUFFER, gm.vbo)
+        _stream_buffer(gl.ARRAY_BUFFER, len(vertices) * size_of(Vertex), &vertices[0])
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, gm.ibo)
+        _stream_buffer(gl.ELEMENT_ARRAY_BUFFER, len(indices) * size_of(u32), &indices[0])
+
+        gm.index_count = len(indices)
+        mesh.version = geometry_version
+    }
+    if gm.index_count == 0 do return
+
+    target_w, target_h := _bind_target(target)
+
+    if r, ok := scissor.?; ok {
+        y := i32(target_h) - i32(r.y) - i32(r.h)
+        if y < 0 do y = 0
+        gl.Enable(gl.SCISSOR_TEST)
+        gl.Scissor(i32(r.x), y, i32(r.w), i32(r.h))
+    } else {
+        gl.Disable(gl.SCISSOR_TEST)
+    }
+
+    switch blend {
+    case .Opaque:
+        gl.Disable(gl.BLEND)
+    case .Alpha:
+        gl.Enable(gl.BLEND)
+        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    case .Additive:
+        gl.Enable(gl.BLEND)
+        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE)
+    }
+
+    gl.UseProgram(_state.program)
+    gl.Uniform2f(_state.loc_resolution, f32(target_w), f32(target_h))
+
+    has_tex := false
+    if texture != INVALID_TEXTURE && int(texture) - 1 < len(_state.textures) {
+        tex := _state.textures[int(texture) - 1]
+        if tex.id != 0 {
+            gl.ActiveTexture(gl.TEXTURE0)
+            gl.BindTexture(gl.TEXTURE_2D, tex.id)
+            gl.Uniform1i(gl.GetUniformLocation(_state.program, "u_tex"), 0)
+            has_tex = true
+        }
+    }
+    gl.Uniform1i(_state.loc_has_tex, has_tex ? 1 : 0)
+
+    gl.BindVertexArray(gm.vao)
+    gl.DrawElements(gl.TRIANGLES, i32(gm.index_count), gl.UNSIGNED_INT, nil)
+    gl.BindVertexArray(_state.vao)
 }
 
 @(private="file")
@@ -304,10 +453,162 @@ _draw_glyphs :: proc(
 
     gl.BindVertexArray(_state.glyph_vao)
     gl.BindBuffer(gl.ARRAY_BUFFER, _state.glyph_vbo)
-    gl.BufferData(gl.ARRAY_BUFFER, len(vertices) * size_of(Glyph_Vertex), &vertices[0], gl.DYNAMIC_DRAW)
+    _stream_buffer(gl.ARRAY_BUFFER, len(vertices) * size_of(Glyph_Vertex), &vertices[0])
     gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, _state.glyph_ibo)
-    gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices) * size_of(u32), &indices[0], gl.DYNAMIC_DRAW)
+    _stream_buffer(gl.ELEMENT_ARRAY_BUFFER, len(indices) * size_of(u32), &indices[0])
     gl.DrawElements(gl.TRIANGLES, i32(len(indices)), gl.UNSIGNED_INT, nil)
+    gl.BindVertexArray(_state.vao)
+}
+
+@(private="file")
+_draw_glyph_mesh :: proc(
+    target:           Render_Target,
+    mesh:             ^Glyph_Mesh,
+    vertices:         []Glyph_Vertex,
+    indices:          []u32,
+    geometry_version: u64,
+    curves:           [][2]f32,
+    curves_version:   u64,
+    scissor:          Maybe(common.Rect),
+) {
+    if mesh == nil do return
+
+    if mesh.idx == 0 {
+        vaos: [1]u32
+        bufs: [2]u32
+        gl.GenVertexArrays(1, &vaos[0])
+        gl.GenBuffers(2, &bufs[0])
+        gl.BindVertexArray(vaos[0])
+        gl.BindBuffer(gl.ARRAY_BUFFER, bufs[0])
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufs[1])
+
+        stride := i32(size_of(Glyph_Vertex))
+        gl.EnableVertexAttribArray(0)
+        gl.VertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0)
+        gl.EnableVertexAttribArray(1)
+        gl.VertexAttribPointer(1, 2, gl.FLOAT, false, stride, 8)
+        gl.EnableVertexAttribArray(2)
+        gl.VertexAttribPointer(2, 4, gl.UNSIGNED_BYTE, true, stride, 16)
+        gl.EnableVertexAttribArray(3)
+        gl.VertexAttribIPointer(3, 2, gl.UNSIGNED_INT, stride, 20)
+
+        append(&_state.glyph_meshes, GL_Glyph_Mesh{vao = vaos[0], vbo = bufs[0], ibo = bufs[1]})
+        mesh.idx = u32(len(_state.glyph_meshes))
+    }
+
+    mi := int(mesh.idx) - 1
+    if mi < 0 || mi >= len(_state.glyph_meshes) do return
+    gm := &_state.glyph_meshes[mi]
+    if mesh.version != geometry_version {
+        if len(vertices) == 0 || len(indices) == 0 do return
+        gl.BindVertexArray(gm.vao)
+        gl.BindBuffer(gl.ARRAY_BUFFER, gm.vbo)
+        _stream_buffer(gl.ARRAY_BUFFER, len(vertices) * size_of(Glyph_Vertex), &vertices[0])
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, gm.ibo)
+        _stream_buffer(gl.ELEMENT_ARRAY_BUFFER, len(indices) * size_of(u32), &indices[0])
+        gm.index_count = len(indices)
+        mesh.version = geometry_version
+    }
+    if gm.index_count == 0 do return
+
+    target_w, target_h := _bind_target(target)
+    if r, ok := scissor.?; ok {
+        y_bottom := i32(target_h) - i32(r.y) - i32(r.h)
+        if y_bottom < 0 do y_bottom = 0
+        gl.Enable(gl.SCISSOR_TEST)
+        gl.Scissor(i32(r.x), y_bottom, i32(r.w), i32(r.h))
+    } else {
+        gl.Disable(gl.SCISSOR_TEST)
+    }
+    gl.Enable(gl.BLEND)
+    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+    if _state.curves_version != curves_version && len(curves) > 0 {
+        gl.BindBuffer(gl.TEXTURE_BUFFER, _state.curve_buf)
+        gl.BufferData(gl.TEXTURE_BUFFER, len(curves) * size_of([2]f32), &curves[0], gl.DYNAMIC_DRAW)
+        gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
+        gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RG32F, _state.curve_buf)
+        _state.curves_version = curves_version
+    }
+
+    gl.UseProgram(_state.glyph_program)
+    gl.Uniform2f(_state.locyph_resolution, f32(target_w), f32(target_h))
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
+    gl.Uniform1i(gl.GetUniformLocation(_state.glyph_program, "u_curves"), 0)
+    gl.BindVertexArray(gm.vao)
+    gl.DrawElements(gl.TRIANGLES, i32(gm.index_count), gl.UNSIGNED_INT, nil)
+    gl.BindVertexArray(_state.vao)
+}
+
+@(private="file")
+_draw_msdf_mesh :: proc(
+    target:           Render_Target,
+    mesh:             ^Glyph_Mesh,
+    vertices:         []Glyph_Vertex,
+    indices:          []u32,
+    geometry_version: u64,
+    atlas:            Texture,
+    pixel_range:      f32,
+    scissor:          Maybe(common.Rect),
+) {
+    if mesh == nil || atlas == INVALID_TEXTURE do return
+    ti := int(atlas) - 1
+    if ti < 0 || ti >= len(_state.textures) || _state.textures[ti].id == 0 do return
+
+    if mesh.idx == 0 {
+        vaos: [1]u32
+        bufs: [2]u32
+        gl.GenVertexArrays(1, &vaos[0])
+        gl.GenBuffers(2, &bufs[0])
+        gl.BindVertexArray(vaos[0])
+        gl.BindBuffer(gl.ARRAY_BUFFER, bufs[0])
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufs[1])
+        stride := i32(size_of(Glyph_Vertex))
+        gl.EnableVertexAttribArray(0)
+        gl.VertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0)
+        gl.EnableVertexAttribArray(1)
+        gl.VertexAttribPointer(1, 2, gl.FLOAT, false, stride, 8)
+        gl.EnableVertexAttribArray(2)
+        gl.VertexAttribPointer(2, 4, gl.UNSIGNED_BYTE, true, stride, 16)
+        append(&_state.glyph_meshes, GL_Glyph_Mesh{vao = vaos[0], vbo = bufs[0], ibo = bufs[1]})
+        mesh.idx = u32(len(_state.glyph_meshes))
+    }
+
+    mi := int(mesh.idx) - 1
+    if mi < 0 || mi >= len(_state.glyph_meshes) do return
+    gm := &_state.glyph_meshes[mi]
+    if mesh.version != geometry_version {
+        if len(vertices) == 0 || len(indices) == 0 do return
+        gl.BindVertexArray(gm.vao)
+        gl.BindBuffer(gl.ARRAY_BUFFER, gm.vbo)
+        _stream_buffer(gl.ARRAY_BUFFER, len(vertices) * size_of(Glyph_Vertex), &vertices[0])
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, gm.ibo)
+        _stream_buffer(gl.ELEMENT_ARRAY_BUFFER, len(indices) * size_of(u32), &indices[0])
+        gm.index_count = len(indices)
+        mesh.version = geometry_version
+    }
+    if gm.index_count == 0 do return
+
+    target_w, target_h := _bind_target(target)
+    if r, ok := scissor.?; ok {
+        y_bottom := i32(target_h) - i32(r.y) - i32(r.h)
+        if y_bottom < 0 do y_bottom = 0
+        gl.Enable(gl.SCISSOR_TEST)
+        gl.Scissor(i32(r.x), y_bottom, i32(r.w), i32(r.h))
+    } else {
+        gl.Disable(gl.SCISSOR_TEST)
+    }
+    gl.Enable(gl.BLEND)
+    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    gl.UseProgram(_state.msdf_program)
+    gl.Uniform2f(_state.msdf_loc_resolution, f32(target_w), f32(target_h))
+    gl.Uniform1f(_state.msdf_loc_range, pixel_range)
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindTexture(gl.TEXTURE_2D, _state.textures[ti].id)
+    gl.Uniform1i(gl.GetUniformLocation(_state.msdf_program, "u_atlas"), 0)
+    gl.BindVertexArray(gm.vao)
+    gl.DrawElements(gl.TRIANGLES, i32(gm.index_count), gl.UNSIGNED_INT, nil)
     gl.BindVertexArray(_state.vao)
 }
 
@@ -575,7 +876,10 @@ RENDERER_GL :: Renderer {
     clear                 = _clear,
     present               = _present,
     draw                  = _draw,
+    draw_mesh             = _draw_mesh,
     draw_glyphs           = _draw_glyphs,
+    draw_glyph_mesh       = _draw_glyph_mesh,
+    draw_msdf_mesh        = _draw_msdf_mesh,
     create_texture        = _create_texture,
     destroy_texture       = _destroy_texture,
     update_texture        = _update_texture,

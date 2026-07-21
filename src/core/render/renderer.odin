@@ -20,6 +20,19 @@ Glyph_Vertex :: struct {
     curve_count: u32,
 }
 
+// Backend-owned retained glyph geometry. The renderer releases every mesh at
+// context shutdown; callers may keep this lightweight handle on a text node.
+Glyph_Mesh :: struct {
+    idx:     u32,
+    version: u64,
+}
+
+// Backend-owned retained geometry for the regular colored/textured pipeline.
+Mesh :: struct {
+    idx:     u32,
+    version: u64,
+}
+
 Renderer :: struct #all_or_none {
     state_size: proc() -> int,
 
@@ -47,6 +60,19 @@ Renderer :: struct #all_or_none {
 		blend:    Blend_Mode,
     ),
 
+    // Uploads only when the geometry version changes, then reuses the
+    // backend-owned vertex/index buffers on subsequent frames.
+    draw_mesh: proc(
+        target:           Render_Target,
+        mesh:             ^Mesh,
+        vertices:         []Vertex,
+        indices:          []u32,
+        geometry_version: u64,
+        texture:          Texture,
+        scissor:          Maybe(common.Rect),
+        blend:            Blend_Mode,
+    ),
+
 	// Renders glyph quads straight from quadratic bézier outlines: 3 points
 	// per curve in em space. `curves_version` lets each backend context cache the upload;
     // re-send the full slice whenever the version bumps.
@@ -57,6 +83,30 @@ Renderer :: struct #all_or_none {
 		curves:         [][2]f32,
 		curves_version: u64,
 		scissor:        Maybe(common.Rect),
+    ),
+
+    // Uploads when `mesh.version` differs from `geometry_version`, otherwise
+    // draws the retained VAO/VBO/IBO without touching CPU geometry.
+    draw_glyph_mesh: proc(
+        target:           Render_Target,
+        mesh:             ^Glyph_Mesh,
+        vertices:         []Glyph_Vertex,
+        indices:          []u32,
+        geometry_version: u64,
+        curves:           [][2]f32,
+        curves_version:   u64,
+        scissor:          Maybe(common.Rect),
+    ),
+
+    draw_msdf_mesh: proc(
+        target:           Render_Target,
+        mesh:             ^Glyph_Mesh,
+        vertices:         []Glyph_Vertex,
+        indices:          []u32,
+        geometry_version: u64,
+        atlas:            Texture,
+        pixel_range:      f32,
+        scissor:          Maybe(common.Rect),
     ),
 
     create_texture:     proc(data: []u8, width: int, height: int, format: Pixel_Format) -> Texture,
@@ -84,7 +134,7 @@ Renderer :: struct #all_or_none {
     stencil_pop_clip:  proc(),
 }
 
-CONFIG_RENDERER_NAME :: #config(UIRA_RENDER_BACKEND, "")
+CONFIG_RENDERER_NAME :: #config(banana_RENDER_BACKEND, "")
 
 when ODIN_OS == .Windows {
 	DEFAULT_RENDERER_NAME :: "gl"
@@ -109,11 +159,11 @@ when CONFIG_RENDERER_NAME == "" {
 when RENDERER_NAME == "nil" {
 	RENDERER :: RENDERER_NIL
 } else when RENDERER_NAME == "d3d11" {
-	#panic("uira: 'd3d11' render backend not implemented yet. Set UIRA_RENDER_BACKEND=nil for a headless build.")
+	#panic("banana: 'd3d11' render backend not implemented yet. Set banana_RENDER_BACKEND=nil for a headless build.")
 } else when RENDERER_NAME == "gl" {
 	RENDERER :: RENDERER_GL
 } else when RENDERER_NAME == "webgl" {
 	RENDERER :: RENDERER_WEBGL
 } else {
-	#panic("'" + RENDERER_NAME + "' is not a valid UIRA_RENDER_BACKEND on " + ODIN_OS_STRING + ". Available: " + AVAILABLE_RENDERERS)
+	#panic("'" + RENDERER_NAME + "' is not a valid banana_RENDER_BACKEND on " + ODIN_OS_STRING + ". Available: " + AVAILABLE_RENDERERS)
 }

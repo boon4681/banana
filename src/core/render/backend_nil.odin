@@ -14,29 +14,29 @@ _nil_init :: proc(
 	allocator: runtime.Allocator,
 ) {
     _ = state; _ = render; _ = width; _ = height; _ = options; _ = allocator
-    panic("uira render backend 'nil': init() called — set UIRA_RENDER_BACKEND to a real backend")
+    panic("banana render backend 'nil': init() called — set banana_RENDER_BACKEND to a real backend")
 }
 
 _nil_shutdown :: proc() {
-    panic("uira render backend 'nil': shutdown()")
+    panic("banana render backend 'nil': shutdown()")
 }
 
 _nil_set_active_state :: proc(state: rawptr) {
     _ = state
-    panic("uira render backend 'nil': set_internal_state()")
+    panic("banana render backend 'nil': set_internal_state()")
 }
 
 _nil_make_current :: proc() {
-    panic("uira render backend 'nil': make_current()")
+    panic("banana render backend 'nil': make_current()")
 }
 
 _nil_clear :: proc(target: Render_Target, color: common.Color) {
     _ = target; _ = color
-    panic("uira render backend 'nil': clear()")
+    panic("banana render backend 'nil': clear()")
 }
 
 _nil_present :: proc() {
-    panic("uira render backend 'nil': present()")
+    panic("banana render backend 'nil': present()")
 }
 
 _nil_draw :: proc(
@@ -48,7 +48,12 @@ _nil_draw :: proc(
 	blend:    Blend_Mode,
 ) {
     _ = target; _ = vertices; _ = indices; _ = texture; _ = scissor; _ = blend
-    panic("uira render backend 'nil': draw()")
+    panic("banana render backend 'nil': draw()")
+}
+
+_nil_draw_mesh :: proc(target:Render_Target,mesh:^Mesh,vertices:[]Vertex,indices:[]u32,geometry_version:u64,texture:Texture,scissor:Maybe(common.Rect),blend:Blend_Mode) {
+    _=target;_=mesh;_=vertices;_=indices;_=geometry_version;_=texture;_=scissor;_=blend
+    panic("banana render backend 'nil': draw_mesh()")
 }
 
 _nil_draw_glyphs :: proc(
@@ -60,77 +65,105 @@ _nil_draw_glyphs :: proc(
 	scissor:        Maybe(common.Rect),
 ) {
     _ = target; _ = vertices; _ = indices; _ = curves; _ = curves_version; _ = scissor
-    panic("uira render backend 'nil': draw_glyphs()")
+    panic("banana render backend 'nil': draw_glyphs()")
+}
+
+_nil_draw_glyph_mesh :: proc(
+    target: Render_Target,
+    mesh: ^Glyph_Mesh,
+    vertices: []Glyph_Vertex,
+    indices: []u32,
+    geometry_version: u64,
+    curves: [][2]f32,
+    curves_version: u64,
+    scissor: Maybe(common.Rect),
+) {
+    _ = target; _ = mesh; _ = vertices; _ = indices; _ = geometry_version; _ = curves; _ = curves_version; _ = scissor
+    panic("banana render backend 'nil': draw_glyph_mesh()")
+}
+
+_nil_draw_msdf_mesh :: proc(
+    target: Render_Target,
+    mesh: ^Glyph_Mesh,
+    vertices: []Glyph_Vertex,
+    indices: []u32,
+    geometry_version: u64,
+    atlas: Texture,
+    pixel_range: f32,
+    scissor: Maybe(common.Rect),
+) {
+    _ = target; _ = mesh; _ = vertices; _ = indices; _ = geometry_version; _ = atlas; _ = pixel_range; _ = scissor
+    panic("banana render backend 'nil': draw_msdf_mesh()")
 }
 
 _nil_create_texture :: proc(data: []u8, width: int, height: int, format: Pixel_Format) -> Texture {
     _ = data; _ = width; _ = height; _ = format
-    panic("uira render backend 'nil': create_texture()")
+    panic("banana render backend 'nil': create_texture()")
 }
 
 _nil_destroy_texture :: proc(handle: Texture) {
     _ = handle
-    panic("uira render backend 'nil': destroy_texture()")
+    panic("banana render backend 'nil': destroy_texture()")
 }
 
 _nil_update_texture :: proc(handle: Texture, data: []u8, rect: common.Rect) -> bool {
     _ = handle; _ = data; _ = rect
-    panic("uira render backend 'nil': update_texture()")
+    panic("banana render backend 'nil': update_texture()")
 }
 
 _nil_set_texture_filter :: proc(handle: Texture, min, mag, mip: Texture_Filter) {
     _ = handle; _ = min; _ = mag; _ = mip
-    panic("uira render backend 'nil': set_texture_filter()")
+    panic("banana render backend 'nil': set_texture_filter()")
 }
 
 _nil_upload_image :: proc(image: ^Image) -> Texture {
     _ = image
-    panic("uira render backend 'nil': upload_image()")
+    panic("banana render backend 'nil': upload_image()")
 }
 
 _nil_unload_image :: proc(image: ^Image) {
     _ = image
-    panic("uira render backend 'nil': unload_image()")
+    panic("banana render backend 'nil': unload_image()")
 }
 
 _nil_create_render_texture :: proc(width: int, height: int) -> (Texture, Render_Target) {
     _ = width; _ = height
-    panic("uira render backend 'nil': create_render_texture()")
+    panic("banana render backend 'nil': create_render_texture()")
 }
 
 _nil_destroy_render_target :: proc(handle: Render_Target) {
     _ = handle
-    panic("uira render backend 'nil': destroy_render_target()")
+    panic("banana render backend 'nil': destroy_render_target()")
 }
 
 _nil_resize :: proc(width, height: int) {
     _ = width; _ = height
-    panic("uira render backend 'nil': resize()")
+    panic("banana render backend 'nil': resize()")
 }
 
 _nil_swapchain_size :: proc() -> (int, int) {
-    panic("uira render backend 'nil': swapchain_size()")
+    panic("banana render backend 'nil': swapchain_size()")
 }
 
 _nil_read_pixels :: proc(target: Render_Target, allocator: runtime.Allocator) -> ([]u8, int, int) {
     _ = target; _ = allocator
-    panic("uira render backend 'nil': read_pixels()")
+    panic("banana render backend 'nil': read_pixels()")
 }
 
 _nil_stencil_clear :: proc() {
-    panic("uira render backend 'nil': stencil_clear()")
+    panic("banana render backend 'nil': stencil_clear()")
 }
 
 _nil_stencil_push_clip :: proc() {
-    panic("uira render backend 'nil': stencil_push_clip()")
+    panic("banana render backend 'nil': stencil_push_clip()")
 }
 
 _nil_stencil_use_clip :: proc() {
-    panic("uira render backend 'nil': stencil_use_clip()")
+    panic("banana render backend 'nil': stencil_use_clip()")
 }
 
 _nil_stencil_pop_clip :: proc() {
-    panic("uira render backend 'nil': stencil_pop_clip()")
+    panic("banana render backend 'nil': stencil_pop_clip()")
 }
 
 RENDERER_NIL :: Renderer {
@@ -142,7 +175,10 @@ RENDERER_NIL :: Renderer {
     clear                 = _nil_clear,
     present               = _nil_present,
     draw                  = _nil_draw,
+    draw_mesh             = _nil_draw_mesh,
     draw_glyphs           = _nil_draw_glyphs,
+    draw_glyph_mesh       = _nil_draw_glyph_mesh,
+    draw_msdf_mesh        = _nil_draw_msdf_mesh,
     create_texture        = _nil_create_texture,
     destroy_texture       = _nil_destroy_texture,
     update_texture        = _nil_update_texture,
