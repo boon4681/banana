@@ -9,6 +9,7 @@ const libs = [
     { build: "build-yoga.zig", dir: "yoga", name: "yogacore", cpp: true },
     { build: "build-harfbuzz.zig", dir: "harfbuzz", name: "harfbuzz", cpp: true },
     { build: "build-fribidi.zig", dir: "fribidi", name: "fribidi", cpp: false },
+    { build: "build-msdfgen.zig", dir: "msdfgen", name: "msdfgen", cpp: true },
 ]
 
 for (const lib of libs) {

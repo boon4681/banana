@@ -9,3 +9,6 @@
 [submodule "fribidi"]
     path = libc/fribidi
     url = https://github.com/fribidi/fribidi
+[submodule "msdfgen"]
+    path = libc/msdfgen
+    url = https://github.com/Chlumsky/msdfgen.git

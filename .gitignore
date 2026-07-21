@@ -5,3 +5,4 @@ fmt/
 node_modules/
 *.exe
 *.pdb
+*.back
