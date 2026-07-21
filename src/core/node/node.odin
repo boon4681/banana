@@ -44,6 +44,9 @@ BaseNode :: struct {
     // `clip_mode` decides how it's enforced (axis-aligned scissor vs stencil).
     clip_mode: ClipMode,
     clip_rect: Maybe(common.Rect),
+    // Which axes `clip_mode` constrains.
+    clip_x: bool,
+    clip_y: bool,
 
     bus: events.Bus,
 
@@ -58,6 +61,7 @@ BaseNode :: struct {
     queue_free:     proc(self: ^BaseNode) -> Node_Error,
     apply_measure:  proc(self: ^BaseNode),
     measure:        MeasureCallback,
+    dirty:          proc(self: ^BaseNode),
 
     on:        proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal), capture := false, once := false) -> uint,
     off:       proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal)),
@@ -120,6 +124,7 @@ Init :: proc(n: ^Node, key: Maybe(string) = nil) {
     n.apply_measure = _apply_measure
     n.queue_free = _queue_free
     n.free = _node_free
+    n.dirty = _node_dirty
     n.on = _on
     n.off = _off
 
@@ -130,6 +135,11 @@ Init :: proc(n: ^Node, key: Maybe(string) = nil) {
 _node_draw :: proc(self: ^Node) {
     // @empty
     // for user or component to override
+}
+
+@(private="file")
+_node_dirty :: proc(self: ^Node) {
+    YG.NodeMarkDirty(self.raw)
 }
 
 @(private="file")
