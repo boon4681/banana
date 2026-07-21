@@ -37,7 +37,7 @@ namespace std {
     std::abort();
 }
 inline namespace __1 {
-void __libcpp_verbose_abort(const char*, ...) {
+void __libcpp_verbose_abort(const char*, ...) noexcept {
     std::abort();
 }
 }
