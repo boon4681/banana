@@ -21,6 +21,8 @@ Vector_State :: struct {
 	scissor:    Maybe(common.Rect),
 	clips:      [dynamic]Clip_Entry,
 	transforms: [dynamic]common.Mat3x3,
+	msdf_atlas: render.Texture,
+	msdf_atlas_version: u64,
 }
 
 @(private="file")
@@ -28,9 +30,11 @@ _vs :: proc(p: Painter) -> ^Vector_State {
 	return cast(^Vector_State)(p.state)
 }
 
-_vec_state_size :: proc() -> int { return size_of(Vector_State) }
+@(private="file")
+_state_size :: proc() -> int { return size_of(Vector_State) }
 
-_vec_init :: proc(p: Painter, allocator: runtime.Allocator) {
+@(private="file")
+_init :: proc(p: Painter, allocator: runtime.Allocator) {
 	v := _vs(p)
 	v^ = {}
 	v.verts = make([dynamic]render.Vertex, allocator)
@@ -40,16 +44,19 @@ _vec_init :: proc(p: Painter, allocator: runtime.Allocator) {
 	append(&v.transforms, common.Mat3X3_IDENTITY)
 }
 
-_vec_shutdown :: proc(p: Painter) {
+@(private="file")
+_shutdown :: proc(p: Painter) {
 	v := _vs(p)
 	if v == nil do return
+	if v.msdf_atlas != render.INVALID_TEXTURE do render.RENDERER.destroy_texture(v.msdf_atlas)
 	delete(v.verts)
 	delete(v.indices)
 	delete(v.clips)
 	delete(v.transforms)
 }
 
-_vec_begin_frame :: proc(p: Painter, color: common.Color) {
+@(private="file")
+_begin_frame :: proc(p: Painter, color: common.Color) {
 	v := _vs(p)
 	render.RENDERER.clear(render.INVALID_RENDER_TARGET, color)
 	render.RENDERER.stencil_clear()
@@ -62,12 +69,14 @@ _vec_begin_frame :: proc(p: Painter, color: common.Color) {
 	v.scissor = nil
 }
 
-_vec_end_frame :: proc(p: Painter) {
+@(private="file")
+_end_frame :: proc(p: Painter) {
 	_flush(_vs(p))
 	render.RENDERER.present()
 }
 
-_vec_rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 = 0) {
+@(private="file")
+_rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 = 0) {
 	v := _vs(p)
 	_set_texture(v, render.INVALID_TEXTURE)
 	rad := min(radius, r.w * 0.5, r.h * 0.5)
@@ -85,7 +94,8 @@ _vec_rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 =
 	}
 }
 
-_vec_border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0) {
+@(private="file")
+_border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0) {
 	if width <= 0 do return
 	v := _vs(p)
 	_set_texture(v, render.INVALID_TEXTURE)
@@ -108,7 +118,8 @@ _vec_border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32,
 	}
 }
 
-_vec_image :: proc(p: Painter, image: ^render.Image, r: common.Rect, tint := common.COLOR_WHITE) {
+@(private="file")
+_image :: proc(p: Painter, image: ^render.Image, r: common.Rect, tint := common.COLOR_WHITE) {
 	if image == nil do return
 	texture := render.RENDERER.upload_image(image)
 	if texture == render.INVALID_TEXTURE do return
@@ -122,7 +133,8 @@ _vec_image :: proc(p: Painter, image: ^render.Image, r: common.Rect, tint := com
 	append(&v.indices, base, base + 1, base + 2, base, base + 2, base + 3)
 }
 
-_vec_line :: proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32) {
+@(private="file")
+_line :: proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32) {
 	d := b - a
 	length := linalg.length(d)
 	if length == 0 || width <= 0 do return
@@ -132,12 +144,46 @@ _vec_line :: proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32) {
 	_quad(v, a + n, b + n, b - n, a - n, color)
 }
 
-_vec_glyphs :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
+@(private="file")
+_triangles :: proc(p: Painter, points: [][2]f32, indices: []u32, color: common.Color) {
+	if len(points) == 0 || len(indices) < 3 do return
+	v := _vs(p)
+	_set_texture(v, render.INVALID_TEXTURE)
+	base := u32(len(v.verts))
+	for point in points do _vert(v, point, {0, 0}, color)
+	for index in indices {
+		if int(index) < len(points) do append(&v.indices, base + index)
+	}
+}
+
+@(private="file")
+_mesh_cached :: proc(p:Painter,cache:^Mesh_Cache,source_version:u64,vertices:[]render.Vertex,indices:[]u32) {
+	if cache==nil do return
+	v:=_vs(p);_flush(v)
+	m:=_top(v);rebuild:=!cache.valid||cache.source_version!=source_version||cache.transform!=m
+	geometry_version:=cache.mesh.version
+	out_vertices:=vertices
+	if rebuild {
+		if len(vertices)==0||len(indices)==0 do return
+		transformed:=make([]render.Vertex,len(vertices),context.temp_allocator)
+		for vertex,i in vertices { transformed[i]=vertex;transformed[i].pos=_pt(v,vertex.pos) }
+		out_vertices=transformed;cache.source_version=source_version;cache.transform=m;cache.valid=true;geometry_version+=1
+	}
+	render.RENDERER.draw_mesh(render.INVALID_RENDER_TARGET,&cache.mesh,out_vertices,indices,geometry_version,render.INVALID_TEXTURE,v.scissor,.Alpha)
+}
+
+@(private="file")
+_glyphs :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
 	if len(quads) == 0 do return
 	v := _vs(p)
 	// Different pipeline: emit pending geometry first so paint order holds.
 	_flush(v)
+	verts, indices := _glyph_geometry(v, quads, color)
+	render.RENDERER.draw_glyphs(render.INVALID_RENDER_TARGET, verts, indices, curves, version, v.scissor)
+}
 
+@(private="file")
+_glyph_geometry :: proc(v: ^Vector_State, quads: []Glyph_Quad, color: common.Color) -> ([]render.Glyph_Vertex, []u32) {
 	verts := make([dynamic]render.Glyph_Vertex, 0, len(quads) * 4, context.temp_allocator)
 	indices := make([dynamic]u32, 0, len(quads) * 6, context.temp_allocator)
 	for q in quads {
@@ -162,10 +208,84 @@ _vec_glyphs :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Q
 		}
 		append(&indices, base, base + 1, base + 2, base, base + 2, base + 3)
 	}
-	render.RENDERER.draw_glyphs(render.INVALID_RENDER_TARGET, verts[:], indices[:], curves, version, v.scissor)
+	return verts[:], indices[:]
 }
 
-_vec_push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode) {
+@(private="file")
+_glyphs_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
+	if cache == nil || len(quads) == 0 do return
+	v := _vs(p)
+	_flush(v)
+
+	m := _top(v)
+	rebuild := !cache.valid || cache.source_version != source_version || cache.transform != m || cache.color != color
+	vertices: []render.Glyph_Vertex
+	indices: []u32
+	geometry_version := cache.mesh.version
+	if rebuild {
+		vertices, indices = _glyph_geometry(v, quads, color)
+		cache.source_version = source_version
+		cache.transform = m
+		cache.color = color
+		cache.valid = true
+		geometry_version += 1
+	}
+	render.RENDERER.draw_glyph_mesh(render.INVALID_RENDER_TARGET, &cache.mesh, vertices, indices, geometry_version, curves, version, v.scissor)
+}
+
+@(private="file")
+_msdf_geometry :: proc(v: ^Vector_State, quads: []MSDF_Quad, color: common.Color) -> ([]render.Glyph_Vertex, []u32) {
+	verts := make([dynamic]render.Glyph_Vertex, 0, len(quads) * 4, context.temp_allocator)
+	indices := make([dynamic]u32, 0, len(quads) * 6, context.temp_allocator)
+	for q in quads {
+		base := u32(len(verts))
+		corners := [4]struct { pos, uv: [2]f32 } {
+			{{q.rect.x, q.rect.y}, {q.uv[0], q.uv[3]}},
+			{{q.rect.x + q.rect.w, q.rect.y}, {q.uv[2], q.uv[3]}},
+			{{q.rect.x + q.rect.w, q.rect.y + q.rect.h}, {q.uv[2], q.uv[1]}},
+			{{q.rect.x, q.rect.y + q.rect.h}, {q.uv[0], q.uv[1]}},
+		}
+		for c in corners {
+			append(&verts, render.Glyph_Vertex{pos = _pt(v, c.pos), uv = c.uv, color = color})
+		}
+		append(&indices, base, base + 1, base + 2, base, base + 2, base + 3)
+	}
+	return verts[:], indices[:]
+}
+
+@(private="file")
+_msdf_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas_pixels: []u8, atlas_w, atlas_h: int, atlas_version: u64, pixel_range: f32, quads: []MSDF_Quad, color: common.Color) {
+	if cache == nil || len(quads) == 0 || len(atlas_pixels) == 0 do return
+	v := _vs(p)
+	_flush(v)
+	if v.msdf_atlas == render.INVALID_TEXTURE {
+		v.msdf_atlas = render.RENDERER.create_texture(atlas_pixels, atlas_w, atlas_h, .RGBA8)
+		render.RENDERER.set_texture_filter(v.msdf_atlas, .Linear, .Linear, .Linear)
+		v.msdf_atlas_version = atlas_version
+	} else if v.msdf_atlas_version != atlas_version {
+		if render.RENDERER.update_texture(v.msdf_atlas, atlas_pixels, {0, 0, f32(atlas_w), f32(atlas_h)}) {
+			v.msdf_atlas_version = atlas_version
+		}
+	}
+
+	m := _top(v)
+	rebuild := !cache.valid || cache.source_version != source_version || cache.transform != m || cache.color != color
+	vertices: []render.Glyph_Vertex
+	indices: []u32
+	geometry_version := cache.mesh.version
+	if rebuild {
+		vertices, indices = _msdf_geometry(v, quads, color)
+		cache.source_version = source_version
+		cache.transform = m
+		cache.color = color
+		cache.valid = true
+		geometry_version += 1
+	}
+	render.RENDERER.draw_msdf_mesh(render.INVALID_RENDER_TARGET, &cache.mesh, vertices, indices, geometry_version, v.msdf_atlas, pixel_range, v.scissor)
+}
+
+@(private="file")
+_push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode) {
 	v := _vs(p)
 	_flush(v)
 	m := _top(v)
@@ -190,7 +310,8 @@ _vec_push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode) {
 	}
 }
 
-_vec_pop_clip :: proc(p: Painter) {
+@(private="file")
+_pop_clip :: proc(p: Painter) {
 	v := _vs(p)
 	if len(v.clips) == 0 do return
 	_flush(v)
@@ -201,7 +322,8 @@ _vec_pop_clip :: proc(p: Painter) {
 	}
 }
 
-_vec_pixel_scale :: proc(p: Painter) -> [2]f32 {
+@(private="file")
+_pixel_scale :: proc(p: Painter) -> [2]f32 {
 	m := _top(_vs(p))
 	return {
 		linalg.length([2]f32{m[0, 0], m[1, 0]}),
@@ -209,7 +331,8 @@ _vec_pixel_scale :: proc(p: Painter) -> [2]f32 {
 	}
 }
 
-_vec_push_transform :: proc(p: Painter, t: common.Transform, at: [2]f32) {
+@(private="file")
+_push_transform :: proc(p: Painter, t: common.Transform, at: [2]f32) {
 	v := _vs(p)
 	origin := at + t.origin
 	cosr := math.cos(t.rotate)
@@ -227,7 +350,8 @@ _vec_push_transform :: proc(p: Painter, t: common.Transform, at: [2]f32) {
 	append(&v.transforms, _top(v) * m)
 }
 
-_vec_pop_transform :: proc(p: Painter) {
+@(private="file")
+_pop_transform :: proc(p: Painter) {
 	v := _vs(p)
 	if len(v.transforms) > 1 do pop(&v.transforms)
 }
@@ -318,19 +442,23 @@ _intersect :: proc(a, b: common.Rect) -> common.Rect {
 }
 
 PAINTER_VECTOR :: Painter_Interface {
-	state_size     = _vec_state_size,
-	init           = _vec_init,
-	shutdown       = _vec_shutdown,
-	begin_frame    = _vec_begin_frame,
-	end_frame      = _vec_end_frame,
-	rect           = _vec_rect,
-	border         = _vec_border,
-	image          = _vec_image,
-	line           = _vec_line,
-	glyphs         = _vec_glyphs,
-	pixel_scale    = _vec_pixel_scale,
-	push_clip      = _vec_push_clip,
-	pop_clip       = _vec_pop_clip,
-	push_transform = _vec_push_transform,
-	pop_transform  = _vec_pop_transform,
+	state_size     = _state_size,
+	init           = _init,
+	shutdown       = _shutdown,
+	begin_frame    = _begin_frame,
+	end_frame      = _end_frame,
+	rect           = _rect,
+	border         = _border,
+	image          = _image,
+	line           = _line,
+	triangles      = _triangles,
+	mesh_cached    = _mesh_cached,
+	glyphs         = _glyphs,
+	glyphs_cached  = _glyphs_cached,
+	msdf_cached    = _msdf_cached,
+	pixel_scale    = _pixel_scale,
+	push_clip      = _push_clip,
+	pop_clip       = _pop_clip,
+	push_transform = _push_transform,
+	pop_transform  = _pop_transform,
 }

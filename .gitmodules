@@ -12,3 +12,9 @@
 [submodule "msdfgen"]
     path = libc/msdfgen
     url = https://github.com/Chlumsky/msdfgen.git
+[submodule "libc/lunasvg"]
+	path = libc/lunasvg
+	url = https://github.com/sammycage/lunasvg.git
+[submodule "libc/plutovg"]
+	path = libc/plutovg
+	url = https://github.com/sammycage/plutovg.git

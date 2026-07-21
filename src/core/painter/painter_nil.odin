@@ -6,81 +6,120 @@ import "base:runtime"
 import "src:core/render"
 import "src:core/common"
 
-_pnil_state_size :: proc() -> int {
+@(private="file")
+_state_size :: proc() -> int {
     return 0
 }
 
-_pnil_init :: proc(p: Painter, allocator: runtime.Allocator) {
+@(private="file")
+_init :: proc(p: Painter, allocator: runtime.Allocator) {
     _ = p; _ = allocator
 }
 
-_pnil_shutdown :: proc(p: Painter) {
+@(private="file")
+_shutdown :: proc(p: Painter) {
     _ = p
 }
 
-_pnil_begin_frame :: proc(p: Painter, color: common.Color) {
+@(private="file")
+_begin_frame :: proc(p: Painter, color: common.Color) {
     _ = p; _ = color
 }
 
-_pnil_end_frame :: proc(p: Painter) {
+@(private="file")
+_end_frame :: proc(p: Painter) {
     _ = p
 }
 
-_pnil_rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 = 0) {
+@(private="file")
+_rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 = 0) {
     _ = p; _ = r; _ = color; _ = radius
 }
 
-_pnil_border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0) {
+@(private="file")
+_border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0) {
     _ = p; _ = r; _ = color; _ = width; _ = radius
 }
 
-_pnil_image :: proc(p: Painter, image: ^render.Image, dst: common.Rect, tint := common.COLOR_WHITE) {
+@(private="file")
+_image :: proc(p: Painter, image: ^render.Image, dst: common.Rect, tint := common.COLOR_WHITE) {
     _ = p; _ = image; _ = dst; _ = tint
 }
 
-_pnil_line :: proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32) {
+@(private="file")
+_line :: proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32) {
     _ = p; _ = a; _ = b; _ = color; _ = width
 }
 
-_pnil_glyphs :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
+@(private="file")
+_triangles :: proc(p: Painter, points: [][2]f32, indices: []u32, color: common.Color) {
+    _ = p; _ = points; _ = indices; _ = color
+}
+
+@(private="file")
+_mesh_cached :: proc(p:Painter,cache:^Mesh_Cache,source_version:u64,vertices:[]render.Vertex,indices:[]u32) {
+    _=p;_=cache;_=source_version;_=vertices;_=indices
+}
+
+@(private="file")
+_glyphs :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
     _ = p; _ = curves; _ = version; _ = quads; _ = color
 }
 
-_pnil_pixel_scale :: proc(p: Painter) -> [2]f32 {
+@(private="file")
+_glyphs_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
+    _ = p; _ = cache; _ = source_version; _ = curves; _ = version; _ = quads; _ = color
+}
+
+@(private="file")
+_msdf_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas_pixels: []u8, atlas_w, atlas_h: int, atlas_version: u64, pixel_range: f32, quads: []MSDF_Quad, color: common.Color) {
+    _ = p; _ = cache; _ = source_version; _ = atlas_pixels; _ = atlas_w; _ = atlas_h; _ = atlas_version; _ = pixel_range; _ = quads; _ = color
+}
+
+@(private="file")
+_pixel_scale :: proc(p: Painter) -> [2]f32 {
     _ = p
     return {1, 1}
 }
 
-_pnil_push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode) {
+@(private="file")
+_push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode) {
     _ = p; _ = r; _ = mode
 }
 
-_pnil_pop_clip :: proc(p: Painter) {
+@(private="file")
+_pop_clip :: proc(p: Painter) {
     _ = p
 }
 
-_pnil_push_transform :: proc(p: Painter, t: common.Transform, at: [2]f32) {
+@(private="file")
+_push_transform :: proc(p: Painter, t: common.Transform, at: [2]f32) {
     _ = p; _ = t; _ = at
 }
 
-_pnil_pop_transform :: proc(p: Painter) {
+@(private="file")
+_pop_transform :: proc(p: Painter) {
     _ = p
 }
 
 PAINTER_NIL :: Painter_Interface {
-    state_size     = _pnil_state_size,
-    init           = _pnil_init,
-    shutdown       = _pnil_shutdown,
-    begin_frame    = _pnil_begin_frame,
-    end_frame      = _pnil_end_frame,
-    rect           = _pnil_rect,
-    border         = _pnil_border,
-    image          = _pnil_image,
-    line           = _pnil_line,
-    glyphs         = _pnil_glyphs,
-    pixel_scale    = _pnil_pixel_scale,
-    push_clip      = _pnil_push_clip,
-    pop_clip       = _pnil_pop_clip,
-    push_transform = _pnil_push_transform,
-    pop_transform  = _pnil_pop_transform,
+    state_size     = _state_size,
+    init           = _init,
+    shutdown       = _shutdown,
+    begin_frame    = _begin_frame,
+    end_frame      = _end_frame,
+    rect           = _rect,
+    border         = _border,
+    image          = _image,
+    line           = _line,
+    triangles      = _triangles,
+    mesh_cached    = _mesh_cached,
+    glyphs         = _glyphs,
+    glyphs_cached  = _glyphs_cached,
+    msdf_cached    = _msdf_cached,
+    pixel_scale    = _pixel_scale,
+    push_clip      = _push_clip,
+    pop_clip       = _pop_clip,
+    push_transform = _push_transform,
+    pop_transform  = _pop_transform,
 }

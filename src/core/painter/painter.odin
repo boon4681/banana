@@ -4,7 +4,7 @@ import "src:core/render"
 import "base:runtime"
 import "src:core/common"
 
-CONFIG_PAINTER_NAME :: #config(UIRA_PAINTER, "")
+CONFIG_PAINTER_NAME :: #config(banana_PAINTER, "")
 
 // "vector" tessellates on the CPU and draws through render.
 DEFAULT_PAINTER_NAME :: "vector"
@@ -21,7 +21,7 @@ when PAINTER_NAME == "vector" {
 } else when PAINTER_NAME == "nil" {
     PAINTER :: PAINTER_NIL
 } else {
-    #panic("'" + PAINTER_NAME + "' is not a valid UIRA_PAINTER. Available: " + AVAILABLE_PAINTERS)
+    #panic("'" + PAINTER_NAME + "' is not a valid banana_PAINTER. Available: " + AVAILABLE_PAINTERS)
 }
 
 init           :: proc(p: Painter, allocator: runtime.Allocator) { PAINTER.init(p, allocator) }
@@ -33,7 +33,11 @@ rect           :: proc(p: Painter, r: common.Rect, color: common.Color, radius: 
 border         :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0) { PAINTER.border(p, r, color, width, radius)}
 image          :: proc(p: Painter, image: ^render.Image, dst: common.Rect, tint := common.COLOR_WHITE) { PAINTER.image(p, image, dst, tint) }
 line           :: proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32) { PAINTER.line(p, a, b, color, width) }
+triangles      :: proc(p: Painter, points: [][2]f32, indices: []u32, color: common.Color) { PAINTER.triangles(p, points, indices, color) }
+mesh_cached    :: proc(p: Painter, cache: ^Mesh_Cache, source_version: u64, vertices: []render.Vertex, indices: []u32) { PAINTER.mesh_cached(p, cache, source_version, vertices, indices) }
 glyphs         :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) { PAINTER.glyphs(p, curves, version, quads, color)}
+glyphs_cached  :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) { PAINTER.glyphs_cached(p, cache, source_version, curves, version, quads, color)}
+msdf_cached    :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas_pixels: []u8, atlas_w, atlas_h: int, atlas_version: u64, pixel_range: f32, quads: []MSDF_Quad, color: common.Color) { PAINTER.msdf_cached(p, cache, source_version, atlas_pixels, atlas_w, atlas_h, atlas_version, pixel_range, quads, color)}
 pixel_scale    :: proc(p: Painter) -> [2]f32 { return PAINTER.pixel_scale(p) }
 push_clip      :: proc(p: Painter, r: common.Rect, mode: ClipMode) { PAINTER.push_clip(p, r, mode) }
 pop_clip       :: proc(p: Painter) { PAINTER.pop_clip(p) }
