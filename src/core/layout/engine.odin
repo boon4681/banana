@@ -47,6 +47,7 @@ update :: proc(root: ^Node, avail_w, avail_h: f32) {
     _last_avail[root] = {avail_w, avail_h}
 
     if changed {
+        apply_auto_min_size(root)
         YG.NodeCalculateLayout(root.raw, avail_w, avail_h, .LTR)
     }
     cache_rects(root, 0, 0)
@@ -54,6 +55,35 @@ update :: proc(root: ^Node, avail_w, avail_h: f32) {
     if changed do notify_layout(root)
 
     process(root)
+}
+
+// CSS automatic minimum size.
+@(private)
+apply_auto_min_size :: proc(n: ^Node) {
+    for c in n.children do apply_auto_min_size(c)
+    if n.freed do return
+
+    row := false
+    #partial switch YG.NodeStyleGetFlexDirection(n.raw) {
+    case .Row, .RowReverse: row = true
+    }
+
+    for c in n.children {
+        if c.freed do continue
+        if YG.NodeStyleGetPositionType(c.raw) == .Absolute do continue
+        // Only shrinkable items are at risk of collapsing below their size.
+        if YG.NodeStyleGetFlexShrink(c.raw) == 0 do continue
+
+        scrollable := c.clip_x if row else c.clip_y
+        size := YG.NodeStyleGetWidth(c.raw) if row else YG.NodeStyleGetHeight(c.raw)
+        if !scrollable && size.unit == .Point && size.value > 0 {
+            if row {
+                YG.NodeStyleSetMinWidth(c.raw, size.value)
+            } else {
+                YG.NodeStyleSetMinHeight(c.raw, size.value)
+            }
+        }
+    }
 }
 
 @(private)
