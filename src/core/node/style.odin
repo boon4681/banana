@@ -20,19 +20,31 @@ Position      :: YG.PositionType
 Wrap          :: YG.Wrap
 Display       :: YG.Display
 BoxSizing     :: YG.BoxSizing
-Font          :: text.Font_Set
+// CSS `overflow`, which unlike Yoga's enum has a distinct `auto`. Kept per-axis;
+// see _set_overflow for how the pair collapses to Yoga's single node-wide value.
+Overflow :: enum {
+    Visible,
+    Hidden,
+    Scroll,
+    Auto,
+}
+Font :: text.Font_Set
 
 Text_Style :: struct {
-    color:       common.Color,
-    font_size:   f32,
-    line_height: f32, // px; 0 means `normal` (font metrics)
-    font:        ^Font,
+    color:            common.Color,
+    font_size:        f32,
+    line_height:      f32,
+    line_height_unit: unit,
+    font:             ^Font,
 }
 
 Style :: struct {
     owner: ^Node,
     v:     map[string]any, // holder for any value (for extending)
     text:  Text_Style,
+    // Not Yoga-backed: Yoga stores one node-wide overflow, CSS one per axis.
+    overflow_x: Overflow,
+    overflow_y: Overflow,
     using _internal_vt: ^Style_VTable,
 }
 
@@ -67,11 +79,15 @@ style_vtable := Style_VTable{
     get_position_type   = proc(self: Style, v: Position) -> Position { return YG.NodeStyleGetPositionType(self.owner.raw) },
     get_wrap            = proc(self: Style, v: Wrap) -> Wrap { return YG.NodeStyleGetFlexWrap(self.owner.raw) },
     get_display         = proc(self: Style, v: Display) -> Display { return YG.NodeStyleGetDisplay(self.owner.raw) },
-    get_box_sizing      = proc(self: Style, v: BoxSizing) -> BoxSizing { return YG.NodeStyleGetBoxSizing(self.owner.raw) },
-    get_flex            = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetFlex(self.owner.raw) },
-    get_flex_grow       = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetFlexGrow(self.owner.raw) },
-    get_flex_shrink     = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetFlexShrink(self.owner.raw) },
-    get_aspect_ratio    = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetAspectRatio(self.owner.raw) },
+    // `overflow` reads back the x axis, mirroring how CSS shorthands resolve.
+    get_overflow     = proc(self: Style, v: Overflow) -> Overflow { return _stored(self).overflow_x },
+    get_overflow_x   = proc(self: Style, v: Overflow) -> Overflow { return _stored(self).overflow_x },
+    get_overflow_y   = proc(self: Style, v: Overflow) -> Overflow { return _stored(self).overflow_y },
+    get_box_sizing   = proc(self: Style, v: BoxSizing) -> BoxSizing { return YG.NodeStyleGetBoxSizing(self.owner.raw) },
+    get_flex         = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetFlex(self.owner.raw) },
+    get_flex_grow    = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetFlexGrow(self.owner.raw) },
+    get_flex_shrink  = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetFlexShrink(self.owner.raw) },
+    get_aspect_ratio = proc(self: Style, v: f32) -> f32 { return YG.NodeStyleGetAspectRatio(self.owner.raw) },
 
     get_width      = proc(self: Style, v: f32, u := px) -> (f32, unit) { r := YG.NodeStyleGetWidth(self.owner.raw); return r.value, r.unit },
     get_height     = proc(self: Style, v: f32, u := px) -> (f32, unit) { r := YG.NodeStyleGetHeight(self.owner.raw); return r.value, r.unit },
@@ -128,7 +144,7 @@ style_vtable := Style_VTable{
     get_color       = proc(self: Style, v: Color) -> Color { return Resolve_Text_Style(self.owner).color },
     get_font_size   = proc(self: Style, v: f32) -> f32 { return Resolve_Text_Style(self.owner).font_size },
     get_font        = proc(self: Style, v: ^Font) -> ^Font { return Resolve_Text_Style(self.owner).font },
-    get_line_height = proc(self: Style, v: f32) -> f32 { return Resolve_Text_Style(self.owner).line_height },
+    get_line_height = proc(self: Style, v: f32, u := px) -> (f32, unit) { st := Resolve_Text_Style(self.owner); return st.line_height, st.line_height_unit },
 
     set_direction       = proc(self: Style, val: Direction) -> Style { YG.NodeStyleSetDirection(self.owner.raw, val); return self },
     set_flex_direction  = proc(self: Style, val: FlexDirection) -> Style { YG.NodeStyleSetFlexDirection(self.owner.raw, val); return self },
@@ -139,6 +155,9 @@ style_vtable := Style_VTable{
     set_position_type   = proc(self: Style, val: Position) -> Style { YG.NodeStyleSetPositionType(self.owner.raw, val); return self },
     set_wrap            = proc(self: Style, val: Wrap) -> Style { YG.NodeStyleSetFlexWrap(self.owner.raw, val); return self },
     set_display         = proc(self: Style, val: Display) -> Style { YG.NodeStyleSetDisplay(self.owner.raw, val); return self },
+    set_overflow        = proc(self: Style, val: Overflow) -> Style { _set_overflow(self.owner, val, val); return self },
+    set_overflow_x      = proc(self: Style, val: Overflow) -> Style { s := _stored(self); _set_overflow(self.owner, val, s.overflow_y); return self },
+    set_overflow_y      = proc(self: Style, val: Overflow) -> Style { s := _stored(self); _set_overflow(self.owner, s.overflow_x, val); return self },
     set_box_sizing      = proc(self: Style, val: BoxSizing) -> Style { YG.NodeStyleSetBoxSizing(self.owner.raw, val); return self },
     set_flex            = proc(self: Style, v: f32) -> Style { YG.NodeStyleSetFlex(self.owner.raw, v); return self },
     set_flex_grow       = proc(self: Style, v: f32) -> Style { YG.NodeStyleSetFlexGrow(self.owner.raw, v); return self },
@@ -198,7 +217,7 @@ style_vtable := Style_VTable{
 
     set_color       = proc(self: Style, v: Color) -> Style { _stored(self).text.color = v; return self },
     set_font_size   = proc(self: Style, v: f32) -> Style { _stored(self).text.font_size = v; return self },
-    set_line_height = proc(self: Style, v: f32) -> Style { _stored(self).text.line_height = v; return self },
+    set_line_height = proc(self: Style, v: f32, u := px) -> Style { s := _stored(self); s.text.line_height = v; s.text.line_height_unit = u; return self },
     set_font        = proc(self: Style, v: ^Font) -> Style { _stored(self).text.font = v; return self },
 }
 
@@ -207,6 +226,42 @@ style_vtable := Style_VTable{
 @(private="file")
 _stored :: proc(self: Style) -> ^Style {
     return cast(^Style)self.owner._internal_style
+}
+
+@(private="file")
+_stored_base :: proc(n: ^Node) -> ^Style {
+    return cast(^Style)n._internal_style
+}
+
+// `overflow` is both a layout input (Yoga) and a paint input: anything other
+// than `visible` clips descendants to this node's padding box, per CSS.
+@(private="file")
+_set_overflow :: proc(n: ^Node, x, y: Overflow) {
+    ox, oy := x, y
+    if ox == .Visible && oy != .Visible do ox = .Auto
+    if oy == .Visible && ox != .Visible do oy = .Auto
+
+    s := _stored_base(n)
+    s.overflow_x = ox
+    s.overflow_y = oy
+
+    n.clip_x = ox != .Visible
+    n.clip_y = oy != .Visible
+    n.clip_mode = .None if !n.clip_x && !n.clip_y else .Scissor
+
+    stronger := ox if oy == .Visible else oy
+    YG.NodeStyleSetOverflow(n.raw, _yoga_overflow(stronger))
+}
+
+// Convert style overflow to yoga overflow
+@(private="file")
+_yoga_overflow :: proc(o: Overflow) -> YG.Overflow {
+    switch o {
+    case .Visible: return .Visible
+    case .Hidden:  return .Hidden
+    case .Scroll, .Auto: return .Scroll
+    }
+    return .Visible
 }
 
 @(private="file")
@@ -234,11 +289,20 @@ Set_Style :: proc(n: ^Node, style: ^$T) where intrinsics.type_is_subtype_of(T, S
 // Computed text style: mirroring the DOM's inherited computed style.
 Resolve_Text_Style :: proc(n: ^BaseNode) -> (out: Text_Style) {
     for p := n; p != nil; p = p.parent {
-        if p._internal_style == nil do continue
+        if p._internal_style == nil {
+            continue
+        }
         t := (cast(^Style)p._internal_style).text
-        if out.color == {} do out.color = t.color
-        if out.font_size <= 0 do out.font_size = t.font_size
-        if out.line_height <= 0 do out.line_height = t.line_height
+        if out.color == {} {
+            out.color = t.color
+        }
+        if out.font_size <= 0 {
+            out.font_size = t.font_size
+        }
+        if out.line_height <= 0 {
+            out.line_height = t.line_height
+            out.line_height_unit = t.line_height_unit
+        }
         if out.font == nil do out.font = t.font
     }
     return
