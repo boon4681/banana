@@ -5,16 +5,17 @@ import "src:core/render"
 import "src:core/events"
 
 Init_Options :: struct {
-    width:  int,
-    height: int,
-    title:  cstring,  // cstring so literals auto-coerce; passed straight to the OS
-    vsync:  bool,
+    width:        int,
+    height:       int,
+    title:        cstring,  // cstring so literals auto-coerce; passed straight to the OS
+    vsync:        bool,
+    msaa_samples: u32,
     // Web only: id of the <canvas> this window renders into.
     // Empty falls back to "banana-canvas".
     canvas: string,
 }
 
-DEFAULT_OPTIONS :: Init_Options{width = 800, height = 600, title = "banana", vsync = true}
+DEFAULT_OPTIONS :: Init_Options{width = 800, height = 600, title = "banana", vsync = true, msaa_samples = 4}
 
 Platform_Interface :: struct #all_or_none {
     state_size:          proc() -> int,

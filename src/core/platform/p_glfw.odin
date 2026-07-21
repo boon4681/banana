@@ -44,6 +44,7 @@ _init :: proc(
     glfw.WindowHint(glfw.CONTEXT_VERSION_MINOR, 3)
     glfw.WindowHint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
     glfw.WindowHint(glfw.OPENGL_FORWARD_COMPAT, 1)
+    glfw.WindowHint(glfw.SAMPLES, i32(opts.msaa_samples))
 
     _active.handle = glfw.CreateWindow(i32(opts.width), i32(opts.height), opts.title, nil, nil)
     if _active.handle == nil do panic("window glfw: CreateWindow failed")

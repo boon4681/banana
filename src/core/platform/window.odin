@@ -56,8 +56,11 @@ New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
     w.renderer_state = make([]u8, render.RENDERER.state_size())
     render.RENDERER.set_active_state(&w.renderer_state[0])
     render.RENDERER.init(
-		&w.renderer_state[0], glue, opts.width, opts.height,
-		{vsync = opts.vsync, msaa_samples = 1},
+		&w.renderer_state[0],
+        glue,
+        opts.width,
+        opts.height,
+		{vsync = opts.vsync, msaa_samples = max(opts.msaa_samples, 1)},
 		context.allocator,
     )
 
