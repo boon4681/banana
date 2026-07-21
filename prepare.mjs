@@ -10,6 +10,7 @@ const libs = [
     { build: "build-harfbuzz.zig", dir: "harfbuzz", name: "harfbuzz", cpp: true },
     { build: "build-fribidi.zig", dir: "fribidi", name: "fribidi", cpp: false },
     { build: "build-msdfgen.zig", dir: "msdfgen", name: "msdfgen", cpp: true },
+    { build: "build-lunasvg.zig", dir: "lunasvg", name: "lunasvg", cpp: true },
 ]
 
 for (const lib of libs) {

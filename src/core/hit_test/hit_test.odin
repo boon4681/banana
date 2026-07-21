@@ -47,10 +47,7 @@ contains :: proc(n: ^Node, x, y: f32) -> bool {
 
 @(private)
 clip_contains :: proc(n: ^Node, x, y: f32) -> bool {
-    if cr, ok := n.clip_rect.?; ok {
-        return common.rect_intersect(Rect{n.rect.x + cr.x, n.rect.y + cr.y, cr.w, cr.h}, x, y)
-    }
-    return contains(n, x, y)
+    return common.rect_intersect(paint.clip_rect(n), x, y)
 }
 
 ancestor_chain :: proc(target: ^Node) -> []^Node {
