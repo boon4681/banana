@@ -69,20 +69,6 @@ _is_space :: proc(r: rune) -> bool {
 }
 
 @(private = "file")
-_is_cjk :: proc(r: rune) -> bool {
-	switch r {
-	case 0x2E80 ..= 0x9FFF,   // radicals, kana, CJK symbols, unified ideographs
-	     0xAC00 ..= 0xD7AF,   // hangul syllables
-	     0xF900 ..= 0xFAFF,   // compatibility ideographs
-	     0xFE30 ..= 0xFE4F,   // vertical forms
-	     0xFF00 ..= 0xFF60,   // fullwidth forms
-	     0x20000 ..= 0x2FFFD: // ideograph extensions
-		return true
-	}
-	return false
-}
-
-@(private = "file")
 _face_for :: proc(set: ^Font_Set, r: rune) -> ^Face {
 	for f in set.faces {
 		if stbtt.FindGlyphIndex(&f.info, r) != 0 do return f
@@ -124,7 +110,7 @@ _shape_paragraph :: proc(set: ^Font_Set, par: string, words: ^[dynamic]Word, har
 
 	first_word := true
 	pending_space := false
-	prev_cjk := false
+	prev_class := Break_Class.SP
 	i := 0
 	for i < n {
 		if _is_space(runes[i]) {
@@ -133,17 +119,24 @@ _shape_paragraph :: proc(set: ^Font_Set, par: string, words: ^[dynamic]Word, har
 			continue
 		}
 		start := i
-		cjk := _is_cjk(runes[i])
-		if cjk {
+		cls := break_class(runes[i])
+		if is_ideographic(cls) {
 			i += 1
+		} else if cls == .SA {
+			for i < n && break_class(runes[i]) == .SA do i += 1
 		} else {
-			for i < n && !_is_space(runes[i]) && !_is_cjk(runes[i]) do i += 1
+			for i < n && !_is_space(runes[i]) {
+				c := break_class(runes[i])
+				if is_ideographic(c) || c == .SA do break
+				i += 1
+			}
 		}
+		brk := pending_space || can_break_between(prev_class, cls)
 
 		word := Word {
 			level             = levels[start],
 			space_before      = pending_space,
-			break_before      = pending_space || cjk || prev_cjk,
+			break_before      = brk,
 			hard_break_before = first_word && hard_break,
 		}
 		_shape_word(set, par, runes[:], offs[:], levels, start, i, &word, allocator)
@@ -151,7 +144,7 @@ _shape_paragraph :: proc(set: ^Font_Set, par: string, words: ^[dynamic]Word, har
 
 		first_word = false
 		pending_space = false
-		prev_cjk = cjk
+		prev_class = break_class(runes[i - 1])
 	}
 	// Blank (or all-space) paragraph still occupies a line.
 	if first_word && hard_break {

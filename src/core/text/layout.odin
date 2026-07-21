@@ -8,35 +8,44 @@ Line :: struct {
 	width:      f32, // em, excluding hanging trailing spaces
 }
 
-// Greedy line breaking. `max_w` is in em; pass math.F32_MAX for no wrap.
 break_lines :: proc(st: ^Shaped_Text, max_w: f32, allocator := context.temp_allocator) -> []Line {
 	lines := make([dynamic]Line, allocator)
 	words := st.words
 	n := len(words)
 	if n == 0 do return lines[:]
 
+	// Width of words [from, to), with the leading word's space hanging.
+	measure :: proc(st: ^Shaped_Text, from, to: int) -> (w: f32) {
+		for k in from ..< to {
+			if k > from && st.words[k].space_before do w += st.space_advance
+			w += st.words[k].width
+		}
+		return
+	}
+
 	start := 0
-	w: f32 = 0
+	// UAX #14 forbids starting a line with closing punctuation, say
+	last_ok := -1
+
 	for idx in 0 ..< n {
 		word := words[idx]
 		if idx > 0 && word.hard_break_before {
-			append(&lines, Line{start, idx, w})
+			append(&lines, Line{start, idx, measure(st, start, idx)})
 			start = idx
-			w = 0
-		} else if idx > start && word.break_before {
-			sp: f32 = st.space_advance if word.space_before else 0
-			if w + sp + word.width > max_w {
-				// Trailing spaces hang: `w` never includes the space preceding the word that moved to the next line.
-				append(&lines, Line{start, idx, w})
-				start = idx
-				w = 0
-			}
+			last_ok = -1
+			continue
 		}
-		// Leading spaces are stripped: the line-first word's space hangs.
-		if idx > start && word.space_before do w += st.space_advance
-		w += word.width
+		if idx <= start do continue
+
+		if word.break_before do last_ok = idx
+
+		if measure(st, start, idx + 1) > max_w && last_ok > start {
+			append(&lines, Line{start, last_ok, measure(st, start, last_ok)})
+			start = last_ok
+			last_ok = idx if word.break_before && idx > start else -1
+		}
 	}
-	append(&lines, Line{start, n, w})
+	append(&lines, Line{start, n, measure(st, start, n)})
 	return lines[:]
 }
 

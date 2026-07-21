@@ -7,14 +7,21 @@ import stbtt "vendor:stb/truetype"
 Glyph :: struct {
 	curve_base:  u32,
 	curve_count: u32,
+	contour_base:  u32,
+	contour_count: u32,
 	min, max:    [2]f32,
 }
 
 @(private = "file") _curves: [dynamic][2]f32
+@(private = "file") _contour_ends: [dynamic]u32
 @(private = "file") _version: u64
 
 curve_data :: proc() -> ([][2]f32, u64) {
 	return _curves[:], _version
+}
+
+glyph_contours :: proc(g: Glyph) -> []u32 {
+	return _contour_ends[g.contour_base:][:g.contour_count]
 }
 
 glyph :: proc(f: ^Face, gid: u32) -> Glyph {
@@ -28,6 +35,7 @@ glyph :: proc(f: ^Face, gid: u32) -> Glyph {
 		max = {-math.F32_MAX, -math.F32_MAX},
 	}
 	base := u32(len(_curves) / 3)
+	contour_base := u32(len(_contour_ends))
 	s := f.inv_upem
 	for v in verts[:nv] {
 		p := [2]f32{f32(v.x), f32(v.y)} * s
@@ -52,7 +60,14 @@ glyph :: proc(f: ^Face, gid: u32) -> Glyph {
 	_finish_contour(&o)
 	if verts != nil do stbtt.FreeShape(&f.info, verts)
 
-	g := Glyph{curve_base = base, curve_count = o.count, min = o.min, max = o.max}
+	g := Glyph{
+		curve_base = base,
+		curve_count = o.count,
+		contour_base = contour_base,
+		contour_count = u32(len(_contour_ends)) - contour_base,
+		min = o.min,
+		max = o.max,
+	}
 	if o.count > 0 do _version += 1
 	f.glyphs[gid] = g
 	return g
@@ -80,9 +95,9 @@ _emit :: proc(o: ^_Outline, p0, p1, p2: [2]f32) {
 
 @(private = "file")
 _finish_contour :: proc(o: ^_Outline) {
-	if o.open && o.cur != o.start {
-		_emit(o, o.cur, (o.cur + o.start) * 0.5, o.start)
-	}
+	if !o.open do return
+	if o.cur != o.start do _emit(o, o.cur, (o.cur + o.start) * 0.5, o.start)
+	append(&_contour_ends, o.count)
 	o.open = false
 }
 
