@@ -18,6 +18,11 @@ Image_Error :: enum {
     Allocation_Failed,
 }
 
+Image_Frame :: struct {
+    image: ^render.Image,
+    delay: f32, // seconds to hold this frame
+}
+
 // Context holder for platform; similar to application context
 Window :: struct {
     platform_state: []u8,
@@ -114,6 +119,91 @@ load_image_from_bytes :: proc(w: ^Window, encoded: []u8) -> (image: ^render.Imag
     }
     append(&w.images, image)
     return image, .None
+}
+
+load_image_frames :: proc(w: ^Window, encoded: []u8) -> (frames: []Image_Frame, err: Image_Error) {
+    if w == nil do return nil, .Decode_Failed
+    if len(encoded) == 0 do return nil, .Empty_Input
+    if len(encoded) > int(max(c.int)) do return nil, .Input_Too_Large
+
+    // stb only animates GIF; anything else decodes as a lone frame.
+    if !_is_gif(encoded) {
+        image := load_image_from_bytes(w, encoded) or_return
+        single, alloc_err := make([]Image_Frame, 1, w.allocator)
+        if alloc_err != nil {
+            free_image(w, image)
+            return nil, .Allocation_Failed
+        }
+        single[0] = {image = image, delay = 0}
+        return single, .None
+    }
+
+    delays: [^]c.int
+    x, y, z, source_channels: c.int
+    decoded := stbi.load_gif_from_memory(
+        raw_data(encoded),
+        c.int(len(encoded)),
+        &delays,
+        &x,
+        &y,
+        &z,
+        &source_channels,
+        4,
+    )
+    if decoded == nil do return nil, .Decode_Failed
+    defer stbi.image_free(decoded)
+    defer if delays != nil do stbi.image_free(delays)
+
+    width, height, count := int(x), int(y), int(z)
+    if width <= 0 || height <= 0 || count <= 0 do return nil, .Invalid_Dimensions
+    if width > max(int) / height / 4 do return nil, .Invalid_Dimensions
+    frame_bytes := width * height * 4
+    if count > max(int) / frame_bytes do return nil, .Invalid_Dimensions
+
+    out, alloc_err := make([]Image_Frame, count, w.allocator)
+    if alloc_err != nil do return nil, .Allocation_Failed
+
+    for i in 0 ..< count {
+        pixels, pix_err := make([]u8, frame_bytes, w.allocator)
+        if pix_err != nil {
+            for j in 0 ..< i do free_image(w, out[j].image)
+            delete(out, w.allocator)
+            return nil, .Allocation_Failed
+        }
+        copy(pixels, decoded[i * frame_bytes:][:frame_bytes])
+
+        image := new(render.Image, w.allocator)
+        image^ = render.Image {
+            data   = pixels,
+            w      = u32(width),
+            h      = u32(height),
+            format = .RGBA8,
+        }
+        append(&w.images, image)
+
+        ms := c.int(0)
+        if delays != nil do ms = delays[i]
+        if ms <= 10 do ms = 100
+        out[i] = {
+            image = image,
+            delay = f32(ms) / 1000
+        }
+    }
+    return out, .None
+}
+
+@(private="file")
+_is_gif :: proc(encoded: []u8) -> bool {
+    return len(encoded) >= 6 &&
+        encoded[0] == 'G' && encoded[1] == 'I' && encoded[2] == 'F' &&
+        encoded[3] == '8' && (encoded[4] == '7' || encoded[4] == '9') && encoded[5] == 'a'
+}
+
+// Releases frames returned by load_image_frames, including the slice itself.
+free_image_frames :: proc(w: ^Window, frames: []Image_Frame) {
+    if w == nil || frames == nil do return
+    for f in frames do free_image(w, f.image)
+    delete(frames, w.allocator)
 }
 
 // Releases one image owned by this window. The window is made current before
