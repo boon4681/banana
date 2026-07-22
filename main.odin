@@ -8,10 +8,10 @@ import "src:core/layout"
 import "src:core/node"
 import "src:core/paint"
 import "src:core/painter"
-import "core:os"
 import "src:core/platform"
 import "src:core/text"
 import "src:ui/box"
+import "src:ui/img"
 import "src:ui/svg_node"
 import "src:ui/text_node"
 
@@ -20,6 +20,7 @@ TIGER_SVG :: #load("tiger.svg")
 ui_font: ^text.Font_Set
 fps_label: ^text_node.Text_Node
 stress_text: ^text_node.Text_Node
+photo: ^img.Img_Node
 last_frame: time.Tick
 fps_smooth: f32
 
@@ -63,6 +64,10 @@ build_ui :: proc(root: ^node.Node) {
     assert(tiger_err == .None, "failed to parse embedded tiger.svg")
     tiger->style()->set_flex_grow(1)->set_flex_basis(0, node.percent)->set_height(100, node.percent)
     content->add(tiger)
+
+    photo = img.New("test-gif.gif", {fit = .Cover}, "photo")
+    photo->style()->set_flex_grow(1)->set_flex_basis(0, node.percent)->set_height(100, node.percent)
+    content->add(photo)
 
     text_panel := node.New("stress-text-panel")
     text_panel->style()->set_flex_grow(1)->set_flex_shrink(0)->set_flex_basis(0, node.percent)->set_overflow(.Hidden)
@@ -238,76 +243,4 @@ dynamic_stress_text :: proc(variant: int) -> string {
         _ = line
     }
     return strings.to_string(b)
-}
-
-main :: proc() {
-    layout.scheduler_setup()
-    defer layout.scheduler_shutdown()
-
-    ui_font = text.set_create()
-    defer text.set_destroy(ui_font)
-    for path in ([]string{
-        "C:/Windows/Fonts/segoeui.ttf",  // Latin (primary)
-        "C:/Windows/Fonts/leelawui.ttf", // Thai
-        "C:/Windows/Fonts/msyh.ttc",     // CJK
-    }) {
-        if data, err := os.read_entire_file_from_path(path, context.allocator); err == nil {
-            text.set_register(ui_font, data)
-            delete(data)
-        }
-    }
-
-    window := platform.New({
-        width  = 960,
-        height = 640,
-        title  = "Banana layout test",
-        msaa_samples = 8,
-        // vsync  = true,
-    })
-    defer platform.free(window)
-
-    build_ui(window.root)
-    layout.awake_window(window)
-
-    shot_path: string
-    benchmark := false
-    dynamic_benchmark := false
-    for arg, i in os.args {
-        if arg == "--shot" && i + 1 < len(os.args) do shot_path = os.args[i + 1]
-        if arg == "--bench" do benchmark = true
-        if arg == "--bench-dynamic" do dynamic_benchmark = true
-    }
-    if shot_path != "" {
-        platform.update(window)
-        render_frame(window)
-        if !platform.capture(window, shot_path) do os.exit(1)
-        return
-    }
-
-    if benchmark || dynamic_benchmark {
-        if dynamic_benchmark do stress_text->set_text(dynamic_stress_text(0))
-        // warm up cache
-        for _ in 0 ..< 120 {
-            if !platform.update(window) do return
-            render_frame(window)
-        }
-        start := time.tick_now()
-        frame_count := 3000
-        for frame in 0 ..< frame_count {
-            if dynamic_benchmark && frame % 60 == 0 {
-                stress_text->set_text(dynamic_stress_text(1 + frame / 60))
-            }
-            if !platform.update(window) do return
-            render_frame(window)
-        }
-        elapsed := time.duration_seconds(time.tick_diff(start, time.tick_now()))
-        name := "dynamic" if dynamic_benchmark else "steady"
-        fmt.printfln("{} benchmark: {} frames in {:.3f}s = {:.0f} FPS ({:.3f} ms/frame)", name, frame_count, elapsed, f64(frame_count) / elapsed, elapsed * 1000 / f64(frame_count))
-        return
-    }
-
-    window.on_refresh = render_frame
-    for platform.update(window) {
-        render_frame(window)
-    }
 }
