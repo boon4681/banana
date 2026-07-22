@@ -11,6 +11,7 @@ import glfw "vendor:glfw"
 @(private = "file")
 GLFW_State :: struct {
     handle: glfw.WindowHandle,
+    visible: bool
 }
 
 GLFW_RELEASE :: glfw.RELEASE
@@ -46,7 +47,8 @@ _init :: proc(
     glfw.WindowHint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
     glfw.WindowHint(glfw.OPENGL_FORWARD_COMPAT, 1)
     glfw.WindowHint(glfw.SAMPLES, i32(opts.msaa_samples))
-
+    _active.visible = false
+    glfw.WindowHint(glfw.VISIBLE, 0)
     _active.handle = glfw.CreateWindow(i32(opts.width), i32(opts.height), opts.title, nil, nil)
     if _active.handle == nil do panic("window glfw: CreateWindow failed")
     _live_windows += 1
@@ -307,6 +309,10 @@ _make_current :: proc(state: rawptr) {
 @(private="file")
 _present :: proc(state: rawptr) {
     glfw.SwapBuffers(cast(glfw.WindowHandle)(state))
+    if _active.visible == false {
+        glfw.ShowWindow(cast(glfw.WindowHandle)(state)) 
+        _active.visible = true
+    }
 }
 
 @(private="file")
