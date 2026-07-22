@@ -8,7 +8,11 @@
 #define __wasi_setjmp_h
 #define _WASI_EMULATED_SETJMP
 
-typedef int jmp_buf[1];
+#include <stdint.h>
+
+// Storage for the LLVM/Emscripten Wasm SjLj ABI: invocation id, label, and
+// the two-word exception payload. Keep this in sync with src/lunasvg/wasm.odin.
+typedef uintptr_t jmp_buf[4];
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,9 +24,6 @@ void longjmp(jmp_buf env, int value);
 #ifdef __cplusplus
 }
 #endif
-
-// read binding in lunasvg/wasm.odin
-#define longjmp( env, val )   do { longjmp( env, val ); goto Exit; } while ( 0 )
 
 #endif // __wasm__
 #endif // BANANA_WASM_COMPAT_H

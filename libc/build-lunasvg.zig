@@ -6,11 +6,11 @@ const common_flags = [_][]const u8{
 };
 
 // WASI has no mmap and no system font directories, and its setjmp is a hard
-// #error. The vendored sources stay pristine: the font cache is compiled out
-// through plutovg's own guard, and the rest is patched by the preprocessor via
-// a forced-include shim (see shim/wasm_compat.h).
+// #error. The forced-include shim supplies the setjmp declarations while LLVM's
+// native Wasm SjLj pass lowers the calls to Wasm exception handling.
 const wasm_flags = [_][]const u8{
     "-DPLUTOVG_DISABLE_FONT_FACE_CACHE_LOAD",
+    "-fwasm-exceptions", "-mllvm", "-wasm-enable-sjlj",
 };
 
 const c_flags = common_flags ++ [_][]const u8{"-std=c99"};
@@ -66,7 +66,11 @@ const targets = [_]Target{
     .{ .out = "windows", .query = .{ .cpu_arch = .x86_64, .os_tag = .windows, .abi = .msvc } },
     .{ .out = "linux", .query = .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu } },
     .{ .out = "macos", .query = .{ .cpu_arch = .x86_64, .os_tag = .macos } },
-    .{ .out = "wasm", .query = .{ .cpu_arch = .wasm32, .os_tag = .wasi } },
+    .{ .out = "wasm", .query = .{
+        .cpu_arch = .wasm32,
+        .os_tag = .wasi,
+        .cpu_features_add = std.Target.wasm.featureSet(&.{.exception_handling}),
+    } },
 };
 
 fn patchedLunasvg(b: *std.Build) std.Build.LazyPath {
@@ -126,6 +130,9 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{ .target = b.resolveTargetQuery(t.query), .optimize = .ReleaseFast }),
         });
         lib.root_module.addCSourceFiles(.{ .root = b.path("plutovg/source"), .files = &plutovg_sources, .flags = cf, .language = .c });
+        if (is_wasm) {
+            lib.root_module.addCSourceFile(.{ .file = b.path("shim/wasm_sjlj.c"), .flags = cf, .language = .c });
+        }
         lib.root_module.addCSourceFiles(.{ .root = b.path("lunasvg/source"), .files = &lunasvg_sources, .flags = cppf, .language = .cpp });
         lib.root_module.addCSourceFile(.{ .file = lunasvg_cpp, .flags = cppf, .language = .cpp });
         lib.root_module.addCSourceFiles(.{ .root = b.path("shim"), .files = &.{ "lunasvg_shim.cpp", "cxx_shim.cpp", "lunasvg_libcpp.cpp" }, .flags = cppf, .language = .cpp });
