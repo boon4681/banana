@@ -6,3 +6,4 @@ node_modules/
 *.exe
 *.pdb
 *.back
+/web
