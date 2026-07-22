@@ -45,9 +45,9 @@ New :: proc(str: string = "", key: Maybe(string) = nil) -> ^Text_Node {
     n.get_text = _get_text
     n.data = new(_Text_Data)
 
-    n.draw = transmute(proc(self: ^Node))_text_draw
-    n.on_free = transmute(proc(self: ^Node))_text_free
-    n.measure = transmute(node.MeasureCallback)_text_measure
+    n.draw = transmute(proc(self: ^Node))_draw
+    n.on_free = transmute(proc(self: ^Node))_free
+    n.measure = transmute(node.MeasureCallback)_measure
     n->apply_measure()
 
     _set_text(n, str)
@@ -76,7 +76,7 @@ _set_text :: proc(self: ^Text_Node, s: string) {
 }
 
 @(private = "file")
-_text_free :: proc(self: ^Text_Node) {
+_free :: proc(self: ^Text_Node) {
     d := _data(self)
     delete(d.str)
     text.shaped_destroy(&d.shaped)
@@ -154,7 +154,7 @@ _draw_cached :: proc(d: ^_Text_Data, p: painter.Painter, st: node.Text_Style) {
 }
 
 @(private = "file")
-_text_measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_mode: node.MeasureMode) -> (out_w, out_h: f32) {
+_measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_mode: node.MeasureMode) -> (out_w, out_h: f32) {
     st := _resolve(self)
     _ensure_shaped(self, st.font)
     d := _data(self)
@@ -181,11 +181,11 @@ _text_measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32
     case .AtMost:  out_h = min(out_h, h)
     case .Undefined:
     }
-    return
+    return out_w, out_h
 }
 
 @(private = "file")
-_text_draw :: proc(self: ^Text_Node) {
+_draw :: proc(self: ^Text_Node) {
     st := _resolve(self)
     _ensure_shaped(self, st.font)
     d := _data(self)

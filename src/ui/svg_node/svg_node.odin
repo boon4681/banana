@@ -97,7 +97,7 @@ _measure :: proc(n:^SVG_Node, w:f32, wm:node.MeasureMode, h:f32, hm:node.Measure
     if hm == .Exactly do oh = h
     if wm == .AtMost do ow = min(ow,w)
     if hm == .AtMost do oh = min(oh,h)
-    return
+    return ow, oh
 }
 
 @(private="file")

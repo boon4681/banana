@@ -148,6 +148,9 @@ _awake_node :: proc(n: ^Node){
     n._internal_propagate_awake = _awake_node
     n.queue_free = _queue_free_node
     n.awaken = true
+    if n.on_awake != nil {
+        n->on_awake()
+    }
 }
 
 @(private="file")

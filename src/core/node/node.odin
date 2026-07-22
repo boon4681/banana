@@ -65,6 +65,7 @@ BaseNode :: struct {
 
     on:        proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal), capture := false, once := false) -> uint,
     off:       proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal)),
+    on_awake:  proc(self: ^BaseNode), // EVENT fired after node being awake
     on_free:   proc(self: ^BaseNode), // EVENT CALLBACK fired before free
     on_layout: proc(self: ^BaseNode), // EVENT CALLBACK fired before layout update
 
