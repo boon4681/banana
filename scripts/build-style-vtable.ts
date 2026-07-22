@@ -83,8 +83,8 @@ function fieldsFor(e: Entry): Field[] {
     const ret = types.length === 1 ? types[0] : `(${types.join(", ")})`;
     const paramList = params.map((p) => p.decl).join(", ");
     return [
-        { name: `get_${e.name}`, sig: `proc(self: Style, ${paramList}) -> ${ret}` },
-        { name: `set_${e.name}`, sig: `proc(self: Style, ${paramList}) -> Style` },
+        { name: `get_${e.name}`, sig: `proc(self: ^Style) -> ${ret}` },
+        { name: `set_${e.name}`, sig: `proc(self: ^Style, ${paramList}) -> ^Style` },
     ];
 }
 
