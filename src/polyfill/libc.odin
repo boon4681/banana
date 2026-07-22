@@ -6,6 +6,11 @@ import "base:intrinsics"
 
 @(require) import odin_libc "vendor:libc-shim"
 
+@(export, link_name = "lround")
+shim_lround :: proc "c" (x: f64) -> c.long {
+    return c.long(x + (x < 0 ? -0.5 : 0.5))
+}
+
 @(export, link_name = "calloc")
 shim_calloc :: proc "c" (n, size: c.size_t) -> rawptr {
 	total := n * size

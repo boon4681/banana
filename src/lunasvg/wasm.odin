@@ -6,18 +6,36 @@ import "core:c"
 
 @(require) import _ "src:polyfill"
 
-@(export, link_name = "setjmp")
-shim_setjmp :: proc "c" (env: [^]c.int) -> c.int {
-    if env == nil do return 0
-    pending := env[0]
-    env[0] = 0
-    return pending
+// WebAssembly SjLj.
+// The LLVM pass replaces setjmp/longjmp calls with these ABI helpers;
+// the actual throw is emitted by libc/shim/wasm_sjlj.c because Odin has no wasm.throw.
+@(private = "file")
+Wasm_Longjmp_Args :: struct {
+	env: rawptr,
+	value: c.int,
 }
 
-@(export, link_name = "longjmp")
-shim_longjmp :: proc "c" (env: [^]c.int, value: c.int) {
-    if env == nil do return
-    env[0] = value != 0 ? value : 1
+@(private = "file")
+Wasm_Jmp_Buf :: struct {
+	function_invocation_id: rawptr,
+	label:                  u32,
+	args:                   Wasm_Longjmp_Args,
+}
+
+@(export, link_name = "__wasm_setjmp")
+shim_wasm_setjmp :: proc "c" (env: rawptr, label: u32, function_invocation_id: rawptr) {
+	if env == nil || label == 0 || function_invocation_id == nil do return
+	buf := cast(^Wasm_Jmp_Buf)(env)
+	buf.function_invocation_id = function_invocation_id
+	buf.label = label
+}
+
+@(export, link_name = "__wasm_setjmp_test")
+shim_wasm_setjmp_test :: proc "c" (env, function_invocation_id: rawptr) -> u32 {
+	if env == nil || function_invocation_id == nil do return 0
+	buf := cast(^Wasm_Jmp_Buf)(env)
+	if buf.label == 0 do return 0
+	return buf.function_invocation_id == function_invocation_id ? buf.label : 0
 }
 
 @(export, link_name = "lroundf")
@@ -89,4 +107,12 @@ shim_feof :: proc "c" (stream: rawptr) -> c.int {
 @(export, link_name = "ferror")
 shim_ferror :: proc "c" (stream: rawptr) -> c.int {
     return 0
+}
+
+@(export, link_name = "wcslen")
+shim_wcslen :: proc "c" (text: [^]c.wchar_t) -> c.size_t {
+    if text == nil do return 0
+    count: c.size_t
+    for text[count] != 0 do count += 1
+    return count
 }
