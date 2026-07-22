@@ -3,6 +3,7 @@
     "type": "module",
     "scripts": {
         "prepare": "node ./prepare.mjs",
+        "build:web": "tsx ./scripts/build-web.ts",
         "test": "node ./test.mjs",
         "style": "tsx ./scripts/build-style-vtable.ts --watch"
     },

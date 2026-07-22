@@ -2,8 +2,6 @@ package platform
 
 import "base:runtime"
 import "core:c"
-import "core:os"
-import "core:strings"
 import "src:core/node"
 import "src:core/painter"
 import "src:core/input"
@@ -78,16 +76,6 @@ New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
     input.set_clipboard_procs({get = PLATFORM.clipboard_get, set = PLATFORM.clipboard_set})
     PLATFORM.set_window_user_ptr(&w.platform_state[0], cast(rawptr)(w))
     return w
-}
-
-// Loads an image from a filesystem path into window-owned RAM.
-// On targets without filesystem access, use load_image_from_bytes with fetched data.
-load_image :: proc(w: ^Window, path: string) -> (image: ^render.Image, err: Image_Error) {
-    if w == nil do return nil, .File_Read_Failed
-    encoded, read_err := os.read_entire_file(path, w.allocator)
-    if read_err != nil do return nil, .File_Read_Failed
-    defer delete(encoded, w.allocator)
-    return load_image_from_bytes(w, encoded)
 }
 
 // Decoder used by file loading, browser fetches, and embedded assets. STB always expands the result to RGBA8.
@@ -213,16 +201,6 @@ refresh :: proc(w: ^Window) {
     make_current(w)
     sync_size(w)
     if w.on_refresh != nil do w.on_refresh(w)
-}
-
-// Saves presented frame as a PNG.
-capture :: proc(w: ^Window, path: string) -> bool {
-    if w == nil do return false
-    make_current(w)
-    data, width, height := render.RENDERER.read_pixels(render.INVALID_RENDER_TARGET, context.temp_allocator)
-    if len(data) == 0 || width <= 0 || height <= 0 do return false
-    cpath := strings.clone_to_cstring(path, context.temp_allocator)
-    return stbi.write_png(cpath, c.int(width), c.int(height), 4, raw_data(data), c.int(width * 4)) != 0
 }
 
 close :: proc(w: ^Window) {

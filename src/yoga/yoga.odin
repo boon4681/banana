@@ -265,7 +265,7 @@ foreign yoga {
 
     NodeStyleSetGap             :: proc(node: NodeRef, gutter: Gutter, gap_length: f32) ---
     NodeStyleSetGapPercent      :: proc(node: NodeRef, gutter: Gutter, gap_length: f32) ---
-    NodeStyleGetGap             :: proc(node: NodeRef, gutter: Gutter) -> Value ---
+    NodeStyleGetGap             :: proc(node: NodeRef, gutter: Gutter) -> f32 ---
 
     NodeStyleSetBoxSizing       :: proc(node: NodeRef, box_sizing: BoxSizing) ---
     NodeStyleGetBoxSizing       :: proc(node: NodeRef) -> BoxSizing ---
