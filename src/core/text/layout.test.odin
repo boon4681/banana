@@ -1,3 +1,4 @@
+#+build !wasm32
 package text
 
 import "core:testing"
