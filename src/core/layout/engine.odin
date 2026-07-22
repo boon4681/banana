@@ -142,6 +142,7 @@ _awake_node :: proc(n: ^Node){
     if n == nil || n.awaken do return
     for c in n.children {
         c._internal_propagate_awake = _awake_node
+        c.window = n.window
         c->_internal_propagate_awake()
     }
     n._internal_propagate_awake = _awake_node
