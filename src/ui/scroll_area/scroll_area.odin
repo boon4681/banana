@@ -42,14 +42,14 @@ Scroll_Area :: struct {
 
     _v_track, _v_thumb: ^box.Box,
     _h_track, _h_thumb: ^box.Box,
-    _drag_axis:          _Axis,
-    _drag_pointer:       f32,
-    _drag_scroll:        f32,
-    _track_axis:         _Axis,
-    _track_direction:    f32,
-    _track_pointer:      [2]f32,
-    _track_started:      time.Tick,
-    _track_last:         time.Tick,
+    _drag_axis:         _Axis,
+    _drag_pointer:      f32,
+    _drag_scroll:       f32,
+    _track_axis:        _Axis,
+    _track_direction:   f32,
+    _track_pointer:     [2]f32,
+    _track_started:     time.Tick,
+    _track_last:        time.Tick,
 }
 
 @(private="file")

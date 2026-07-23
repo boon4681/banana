@@ -70,6 +70,7 @@ Style_VTable :: struct #all_or_none {
     get_font_size:           proc(self: ^Style) -> f32,
     get_line_height:         proc(self: ^Style) -> (f32, unit),
     get_font:                proc(self: ^Style) -> ^Font,
+    get_font_weight:         proc(self: ^Style) -> FontWeight,
 
     set_direction:           proc(self: ^Style, v: Direction) -> ^Style,
     set_flex_direction:      proc(self: ^Style, v: FlexDirection) -> ^Style,
@@ -138,4 +139,5 @@ Style_VTable :: struct #all_or_none {
     set_font_size:           proc(self: ^Style, v: f32) -> ^Style,
     set_line_height:         proc(self: ^Style, v: f32, u := px) -> ^Style,
     set_font:                proc(self: ^Style, v: ^Font) -> ^Style,
+    set_font_weight:         proc(self: ^Style, v: FontWeight) -> ^Style,
 }

@@ -18,8 +18,9 @@ MSDF_Glyph :: struct {
 
 @(private="file")
 _MSDF_Key :: struct {
-    face: ^Face,
-    gid:  u32,
+    face:   ^Face,
+    gid:    u32,
+    embold: u16,
 }
 
 @(private="file")
@@ -44,14 +45,37 @@ msdf_atlas_data :: proc() -> (pixels: []u8, width, height: int, version: u64) {
     return _msdf_pixels, MSDF_ATLAS_SIZE, MSDF_ATLAS_SIZE, _msdf_version
 }
 
-msdf_glyph :: proc(face: ^Face, gid: u32) -> (MSDF_Glyph, bool) {
+// Smallest dimension of any single contour, in em.
+@(private = "file")
+_thinnest_contour :: proc(g: Glyph) -> f32 {
+    curves, _ := curve_data()
+    pts := curves[int(g.curve_base) * 3:][:int(g.curve_count) * 3]
+    out := f32(math.F32_MAX)
+    start := u32(0)
+    for e in glyph_contours(g) {
+        mn := [2]f32{math.F32_MAX, math.F32_MAX}
+        mx := [2]f32{-math.F32_MAX, -math.F32_MAX}
+        for p in pts[int(start) * 3:int(e) * 3] {
+            mn.x = min(mn.x, p.x); mn.y = min(mn.y, p.y)
+            mx.x = max(mx.x, p.x); mx.y = max(mx.y, p.y)
+        }
+        out = min(out, min(mx.x - mn.x, mx.y - mn.y))
+        start = e
+    }
+    return out
+}
+
+msdf_glyph :: proc(face: ^Face, gid: u32, embold: f32 = 0) -> (MSDF_Glyph, bool) {
     if face == nil do return {}, false
     if _msdf_glyphs == nil do _msdf_glyphs = make(map[_MSDF_Key]MSDF_Glyph)
-    key := _MSDF_Key{face, gid}
+    key := _MSDF_Key{face, gid, embolden_steps(embold)}
     if cached, ok := _msdf_glyphs[key]; ok do return cached, true
 
-    outline := glyph(face, gid)
+    outline := glyph(face, gid, embold)
     if outline.curve_count == 0 || outline.contour_count == 0 do return {}, false
+    if embold > 0 && _thinnest_contour(outline) < 3 * f32(MSDF_RANGE_PX) / MSDF_EM_PIXELS {
+        return {}, false
+    }
     w := int(math.ceil((outline.max.x - outline.min.x) * f32(MSDF_EM_PIXELS))) + 2 * MSDF_PADDING
     h := int(math.ceil((outline.max.y - outline.min.y) * f32(MSDF_EM_PIXELS))) + 2 * MSDF_PADDING
     if w <= 0 || h <= 0 || w > MSDF_ATLAS_SIZE || h > MSDF_ATLAS_SIZE do return {}, false

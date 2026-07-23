@@ -74,6 +74,22 @@ Feature :: struct {
 	end:   c.uint,
 }
 
+Variation :: struct {
+	tag:   Tag,
+	value: f32,
+}
+
+OT_Var_Axis_Info :: struct {
+	axis_index:    c.uint,
+	tag:           Tag,
+	name_id:       c.uint,
+	flags:         c.uint,
+	min_value:     f32,
+	default_value: f32,
+	max_value:     f32,
+	reserved:      c.uint,
+}
+
 Segment_Properties :: struct {
 	direction: Direction,
 	script:    Script,
@@ -119,14 +135,20 @@ Draw_Close_Path_Func :: proc "c" (dfuncs: Draw_Funcs, draw_data: rawptr, st: ^Dr
 foreign hb {
 	blob_create :: proc(data: [^]u8, length: c.uint, mode: Memory_Mode, user_data: rawptr, destroy: Blob_Destroy_Proc) -> Blob ---
 	blob_destroy :: proc(blob: Blob) ---
+	blob_get_data :: proc(blob: Blob, length: ^c.uint) -> [^]u8 ---
 
 	face_create :: proc(blob: Blob, index: c.uint) -> Face ---
 	face_destroy :: proc(face: Face) ---
 	face_get_upem :: proc(face: Face) -> c.uint ---
+	face_reference_table :: proc(face: Face, tag: Tag) -> Blob ---
 
 	font_create :: proc(face: Face) -> Font ---
 	font_destroy :: proc(font: Font) ---
 	font_set_scale :: proc(font: Font, x_scale, y_scale: c.int) ---
+	font_set_variations :: proc(font: Font, variations: [^]Variation, variations_length: c.uint) ---
+
+	ot_var_has_data :: proc(face: Face) -> Bool ---
+	ot_var_find_axis_info :: proc(face: Face, axis_tag: Tag, axis_info: ^OT_Var_Axis_Info) -> Bool ---
 
 	buffer_create :: proc() -> Buffer ---
 	buffer_destroy :: proc(buffer: Buffer) ---

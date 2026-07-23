@@ -16,9 +16,10 @@ Text_Node :: struct {
 
 @(private = "file")
 _Text_Data :: struct {
-    str:         string, // owned copy
-    shaped:      text.Shaped_Text,
-    shaped_font: ^text.Font_Set, // font the current shaping was done with
+    str:           string, // owned copy
+    shaped:        text.Shaped_Text,
+    shaped_font:   ^text.Font_Set, // font the current shaping was done with
+    shaped_weight: text.FontWeight,
 
     lines:          []text.Line,
     lines_max_w_em: f32,
@@ -30,6 +31,7 @@ _Text_Data :: struct {
     quad_rect:      common.Rect,
     quad_font:      ^text.Font_Set,
     quad_font_size: f32,
+    quad_weight:    text.FontWeight,
     quad_line_h:    f32,
     quad_scale_y:   f32,
     quads_valid:    bool,
@@ -109,12 +111,14 @@ _resolve :: proc(self: ^Text_Node) -> node.Text_Style {
 // Shaping is lazy: at construction the node has no parent yet, so the font is
 // unknown until measure/draw. Re-shapes if the inherited font changed.
 @(private = "file")
-_ensure_shaped :: proc(self: ^Text_Node, font: ^text.Font_Set) {
+_ensure_shaped :: proc(self: ^Text_Node, font: ^text.Font_Set, weight: text.FontWeight) {
     d := _data(self)
-    if font == nil || d.shaped_font == font do return
+    if font == nil do return
+    if d.shaped_font == font && d.shaped_weight == weight do return
     text.shaped_destroy(&d.shaped)
-    d.shaped = text.shape(font, d.str)
+    d.shaped = text.shape(font, d.str, weight)
     d.shaped_font = font
+    d.shaped_weight = weight
     _invalidate_layout(d)
 }
 
@@ -138,7 +142,7 @@ _line_height_em :: proc(st: node.Text_Style) -> f32 {
         case .Percent: return st.line_height
         }
     }
-    return text.line_height(st.font)
+    return text.line_height(st.font, st.font_weight)
 }
 
 @(private="file")
@@ -156,7 +160,7 @@ _draw_cached :: proc(d: ^_Text_Data, p: painter.Painter, st: node.Text_Style) {
 @(private = "file")
 _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_mode: node.MeasureMode) -> (out_w, out_h: f32) {
     st := _resolve(self)
-    _ensure_shaped(self, st.font)
+    _ensure_shaped(self, st.font, st.font_weight)
     d := _data(self)
     if st.font == nil || len(d.shaped.words) == 0 do return 0, 0
 
@@ -187,7 +191,7 @@ _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_m
 @(private = "file")
 _draw :: proc(self: ^Text_Node) {
     st := _resolve(self)
-    _ensure_shaped(self, st.font)
+    _ensure_shaped(self, st.font, st.font_weight)
     d := _data(self)
     if st.font == nil || len(d.shaped.words) == 0 do return
 
@@ -206,6 +210,7 @@ _draw :: proc(self: ^Text_Node) {
         d.quad_rect.h == r.h &&
         d.quad_font == st.font &&
         d.quad_font_size == size &&
+        d.quad_weight == st.font_weight &&
         d.quad_line_h == lh &&
         d.quad_scale_y == scale.y
 
@@ -215,7 +220,7 @@ _draw :: proc(self: ^Text_Node) {
         if moved {
             painter.push_transform(p, common.Transform{
                 translate = {r.x - d.quad_rect.x, r.y - d.quad_rect.y},
-                scale = {1, 1},
+                scale     = {1, 1},
             }, {0, 0})
         }
         _draw_cached(d, p, st)
@@ -233,8 +238,8 @@ _draw :: proc(self: ^Text_Node) {
     msdf_quads := make([dynamic]painter.MSDF_Quad, 0, total_glyphs, context.allocator)
 
     // Half-leading: extra leading splits evenly above and below the text.
-    ascent := text.ascent(st.font)
-    descent := text.descent(st.font)
+    ascent := text.ascent(st.font, st.font_weight)
+    descent := text.descent(st.font, st.font_weight)
     half_leading := (lh - (ascent - descent)) * 0.5
     // 1 layout px of dilation so shader anti-aliasing isn't clipped at quad edges.
     pad := 1.0 / size
@@ -252,11 +257,11 @@ _draw :: proc(self: ^Text_Node) {
             word := d.shaped.words[wi]
             if wi != l.start && word.space_before do pen += d.shaped.space_advance * size
             for g in word.glyphs {
-                gl := text.glyph(g.face, g.gid)
+                gl := text.glyph(g.face, g.gid, g.embold)
                 if gl.curve_count > 0 {
                     gx := pen + g.offset.x * size
                     gy := baseline - g.offset.y * size
-                    if mg, ok := text.msdf_glyph(g.face, g.gid); ok {
+                    if mg, ok := text.msdf_glyph(g.face, g.gid, g.embold); ok {
                         append(&msdf_quads, painter.MSDF_Quad{
                             rect = {
                                 gx + mg.plane[0] * size,
@@ -294,6 +299,7 @@ _draw :: proc(self: ^Text_Node) {
     d.quad_rect = r
     d.quad_font = st.font
     d.quad_font_size = size
+    d.quad_weight = st.font_weight
     d.quad_line_h = lh
     d.quad_scale_y = scale.y
     d.quads_valid = true

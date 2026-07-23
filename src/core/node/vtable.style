@@ -67,3 +67,4 @@ color               :: Color
 font_size           :: f32
 line_height         :: f32, u: unit = px
 font                :: ^Font
+font_weight         :: Weight

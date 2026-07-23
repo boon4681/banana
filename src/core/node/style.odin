@@ -28,7 +28,8 @@ Overflow :: enum {
     Scroll,
     Auto,
 }
-Font :: text.Font_Set
+Font       :: text.Font_Set
+FontWeight :: text.FontWeight
 
 Text_Style :: struct {
     color:            common.Color,
@@ -36,6 +37,7 @@ Text_Style :: struct {
     line_height:      f32,
     line_height_unit: unit,
     font:             ^Font,
+    font_weight:      FontWeight,
 }
 
 Style :: struct {
@@ -145,6 +147,7 @@ style_vtable := Style_VTable{
     get_font_size   = proc(self: ^Style) -> f32 { return Resolve_Text_Style(self.owner).font_size },
     get_font        = proc(self: ^Style) -> ^Font { return Resolve_Text_Style(self.owner).font },
     get_line_height = proc(self: ^Style) -> (f32, unit) { st := Resolve_Text_Style(self.owner); return st.line_height, st.line_height_unit },
+    get_font_weight = proc(self: ^Style) -> FontWeight { return Resolve_Text_Style(self.owner).font_weight },
 
     set_direction       = proc(self: ^Style, val: Direction) -> ^Style { YG.NodeStyleSetDirection(self.owner.raw, val); return self },
     set_flex_direction  = proc(self: ^Style, val: FlexDirection) -> ^Style { YG.NodeStyleSetFlexDirection(self.owner.raw, val); return self },
@@ -219,6 +222,7 @@ style_vtable := Style_VTable{
     set_font_size   = proc(self: ^Style, v: f32) -> ^Style { _stored(self).text.font_size = v; return self },
     set_line_height = proc(self: ^Style, v: f32, u := px) -> ^Style { s := _stored(self); s.text.line_height = v; s.text.line_height_unit = u; return self },
     set_font        = proc(self: ^Style, v: ^Font) -> ^Style { _stored(self).text.font = v; return self },
+    set_font_weight = proc(self: ^Style, v: FontWeight) -> ^Style { _stored(self).text.font_weight = v; return self },
 }
 
 // Text properties aren't yoga-backed; they live on the node's stored Style.
@@ -304,6 +308,8 @@ Resolve_Text_Style :: proc(n: ^BaseNode) -> (out: Text_Style) {
             out.line_height_unit = t.line_height_unit
         }
         if out.font == nil do out.font = t.font
+        if out.font_weight == 0 do out.font_weight = t.font_weight
     }
+    if out.font_weight == 0 do out.font_weight = text.WEIGHT_NORMAL
     return
 }
