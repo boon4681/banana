@@ -38,10 +38,11 @@ Text_Event :: struct {
 Mouse_Event :: struct {
     x, y:   f32,
     button: int, // 0 = left, 1 = right, 2 = middle
+    mods:   Mods,
 }
 
 // "wheel"
 Wheel_Event :: struct {
     x, y:             f32, // cursor position
-    delta_x, delta_y: f32, // scroll amount this frame
+    delta_x, delta_y: f32, // logical pixels; positive points up/left
 }

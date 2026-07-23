@@ -69,4 +69,3 @@ clip_rect :: proc(n: ^Node) -> common.Rect {
     }
     return r
 }
-

@@ -202,7 +202,8 @@ _draw :: proc(self: ^Text_Node) {
     scale := painter.pixel_scale(p)
     lh := _line_height_em(st)
     geometry_matches := d.quads_valid &&
-        d.quad_rect == r &&
+        d.quad_rect.w == r.w &&
+        d.quad_rect.h == r.h &&
         d.quad_font == st.font &&
         d.quad_font_size == size &&
         d.quad_line_h == lh &&
@@ -210,7 +211,15 @@ _draw :: proc(self: ^Text_Node) {
 
     // skip if the geometry is the same
     if geometry_matches {
+        moved := d.quad_rect.x != r.x || d.quad_rect.y != r.y
+        if moved {
+            painter.push_transform(p, common.Transform{
+                translate = {r.x - d.quad_rect.x, r.y - d.quad_rect.y},
+                scale = {1, 1},
+            }, {0, 0})
+        }
         _draw_cached(d, p, st)
+        if moved do painter.pop_transform(p)
         return
     }
 

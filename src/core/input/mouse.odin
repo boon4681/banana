@@ -37,7 +37,7 @@ on_mouse_move :: proc(im: ^Input_State, x, y: f32) {
     im.mouse_y = y
 
     if im.captured != nil {
-        ev := events.Mouse_Event{x = x, y = y}
+        ev := events.Mouse_Event{x = x, y = y, mods = im.mods}
         dispatch(im.captured, events.MOUSE_MOVE_EVENT, &ev)
         return
     }
@@ -46,18 +46,18 @@ on_mouse_move :: proc(im: ^Input_State, x, y: f32) {
 
     if target != im.hovered {
         if im.hovered != nil {
-            ev := events.Mouse_Event{x = x, y = y}
+            ev := events.Mouse_Event{x = x, y = y, mods = im.mods}
             dispatch(im.hovered, events.MOUSE_LEAVE_EVENT, &ev)
         }
         if target != nil {
-            ev := events.Mouse_Event{x = x, y = y}
+            ev := events.Mouse_Event{x = x, y = y, mods = im.mods}
             dispatch(target, events.MOUSE_ENTER_EVENT, &ev)
         }
         im.hovered = target
     }
 
     if target != nil {
-        ev := events.Mouse_Event{x = x, y = y}
+        ev := events.Mouse_Event{x = x, y = y, mods = im.mods}
         dispatch(target, events.MOUSE_MOVE_EVENT, &ev)
     }
 }
@@ -74,18 +74,18 @@ on_mouse_down :: proc(im: ^Input_State, button: int, mods: events.Mods = {}) {
     // Focus change: blur the old, focus the new (only on left button).
     if button == 0 && target != im.focused {
         if im.focused != nil {
-            be := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button}
+            be := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
             dispatch(im.focused, events.BLUR_EVENT, &be)
         }
         im.focused = target
         if target != nil {
-            fe := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button}
+            fe := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
             dispatch(target, events.FOCUS_EVENT, &fe)
         }
     }
 
     if target != nil {
-        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button}
+        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
         dispatch(target, events.MOUSE_DOWN_EVENT, &ev)
     }
 }
@@ -96,7 +96,7 @@ on_mouse_up :: proc(im: ^Input_State, button: int) {
     _active_input_state = im
     if im.captured != nil {
         node := im.captured
-        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button}
+        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
         dispatch(node, events.MOUSE_UP_EVENT, &ev)
         im.captured = nil
         im.pressed = nil
@@ -105,11 +105,11 @@ on_mouse_up :: proc(im: ^Input_State, button: int) {
 
     target := hit_test.hit_test(im.root, im.mouse_x, im.mouse_y)
     if target != nil {
-        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button}
+        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
         dispatch(target, events.MOUSE_UP_EVENT, &ev)
     }
     if button == 0 && target != nil && target == im.pressed {
-        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button}
+        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
         dispatch(target, events.MOUSE_CLICK_EVENT, &ev)
     }
     im.pressed = nil

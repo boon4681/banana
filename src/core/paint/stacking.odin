@@ -9,7 +9,14 @@ Node :: node.BaseNode
 
 Stacking_Context :: struct {
     node: ^Node,
-	// Clipping in-flow ancestors between the parent context
+    // Composed transform state for this prepared frame.
+    local:      common.Mat3x3,
+    world:      common.Mat3x3,
+    inverse:    common.Mat3x3,
+    invertible: bool,
+
+    clip_inverse:    common.Mat3x3,
+    clip_invertible: bool,
     clips: []^Node,
     neg:   []Stacking_Context,
     pos:   []Stacking_Context,
@@ -24,7 +31,7 @@ is_stacking_context :: proc(n: ^Node) -> bool {
 }
 
 build :: proc(root: ^Node, allocator := context.temp_allocator) -> Stacking_Context {
-    return build_ctx(root, nil, allocator)
+    return build_ctx(root, nil, common.Mat3X3_IDENTITY, allocator)
 }
 
 @(private)
@@ -34,8 +41,21 @@ Pending :: struct {
 }
 
 @(private)
-build_ctx :: proc(n: ^Node, clips: []^Node, allocator: runtime.Allocator) -> Stacking_Context {
-    ctx := Stacking_Context{node = n, clips = clips}
+build_ctx :: proc(n: ^Node, clips: []^Node, parent_world: common.Mat3x3, allocator: runtime.Allocator) -> Stacking_Context {
+    local := common.transform_at_matrix(n.transform, {n.rect.x, n.rect.y})
+    world := parent_world * local
+    inverse, invertible := common.affine_inverse(world)
+    clip_inverse, clip_invertible := common.affine_inverse(parent_world)
+    ctx := Stacking_Context{
+        node = n,
+        local = local,
+        world = world,
+        inverse = inverse,
+        invertible = invertible,
+        clip_inverse = clip_inverse,
+        clip_invertible = clip_invertible,
+        clips = clips,
+    }
 
     neg := make([dynamic]Pending, context.temp_allocator)
     pos := make([dynamic]Pending, context.temp_allocator)
@@ -47,9 +67,9 @@ build_ctx :: proc(n: ^Node, clips: []^Node, allocator: runtime.Allocator) -> Sta
     slice.stable_sort_by(pos[:], less_z)
 
     ctx.neg = make([]Stacking_Context, len(neg), allocator)
-    for p, i in neg do ctx.neg[i] = build_ctx(p.node, p.clips, allocator)
+    for p, i in neg do ctx.neg[i] = build_ctx(p.node, p.clips, world, allocator)
     ctx.pos = make([]Stacking_Context, len(pos), allocator)
-    for p, i in pos do ctx.pos[i] = build_ctx(p.node, p.clips, allocator)
+    for p, i in pos do ctx.pos[i] = build_ctx(p.node, p.clips, world, allocator)
     return ctx
 }
 

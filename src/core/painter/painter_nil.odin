@@ -13,93 +13,92 @@ _state_size :: proc() -> int {
 
 @(private="file")
 _init :: proc(p: Painter, allocator: runtime.Allocator) {
-    _ = p; _ = allocator
+    panic("nil painter")
 }
 
 @(private="file")
 _shutdown :: proc(p: Painter) {
-    _ = p
+    panic("nil painter")
 }
 
 @(private="file")
 _begin_frame :: proc(p: Painter, color: common.Color) {
-    _ = p; _ = color
+    panic("nil painter")
 }
 
 @(private="file")
 _end_frame :: proc(p: Painter) {
-    _ = p
+    panic("nil painter")
 }
 
 @(private="file")
 _rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 = 0) {
-    _ = p; _ = r; _ = color; _ = radius
+    panic("nil painter")
 }
 
 @(private="file")
 _border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0) {
-    _ = p; _ = r; _ = color; _ = width; _ = radius
+    panic("nil painter")
 }
 
 @(private="file")
 _image :: proc(p: Painter, image: ^render.Image, dst: common.Rect, tint := common.COLOR_WHITE) {
-    _ = p; _ = image; _ = dst; _ = tint
+    panic("nil painter")
 }
 
 @(private="file")
 _line :: proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32) {
-    _ = p; _ = a; _ = b; _ = color; _ = width
+    panic("nil painter")
 }
 
 @(private="file")
 _triangles :: proc(p: Painter, points: [][2]f32, indices: []u32, color: common.Color) {
-    _ = p; _ = points; _ = indices; _ = color
+    panic("nil painter")
 }
 
 @(private="file")
-_mesh_cached :: proc(p:Painter,cache:^Mesh_Cache,source_version:u64,vertices:[]render.Vertex,indices:[]u32) {
-    _=p;_=cache;_=source_version;_=vertices;_=indices
+_mesh_cached :: proc(p: Painter, cache: ^Mesh_Cache, source_version: u64, vertices: []render.Vertex, indices: []u32) {
+    panic("nil painter")
 }
 
 @(private="file")
 _glyphs :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
-    _ = p; _ = curves; _ = version; _ = quads; _ = color
+    panic("nil painter")
 }
 
 @(private="file")
 _glyphs_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
-    _ = p; _ = cache; _ = source_version; _ = curves; _ = version; _ = quads; _ = color
+    panic("nil painter")
 }
 
 @(private="file")
 _msdf_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas_pixels: []u8, atlas_w, atlas_h: int, atlas_version: u64, pixel_range: f32, quads: []MSDF_Quad, color: common.Color) {
-    _ = p; _ = cache; _ = source_version; _ = atlas_pixels; _ = atlas_w; _ = atlas_h; _ = atlas_version; _ = pixel_range; _ = quads; _ = color
+    panic("nil painter")
 }
 
 @(private="file")
 _pixel_scale :: proc(p: Painter) -> [2]f32 {
-    _ = p
-    return {1, 1}
+    panic("nil painter")
 }
 
 @(private="file")
 _push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode) {
-    _ = p; _ = r; _ = mode
+    panic("nil painter")
 }
 
 @(private="file")
 _pop_clip :: proc(p: Painter) {
-    _ = p
+    panic("nil painter")
 }
 
 @(private="file")
 _push_transform :: proc(p: Painter, t: common.Transform, at: [2]f32) {
-    _ = p; _ = t; _ = at
+    panic("nil painter")
 }
 
 @(private="file")
 _pop_transform :: proc(p: Painter) {
-    _ = p
+    panic("nil painter")
 }
 
 PAINTER_NIL :: Painter_Interface {

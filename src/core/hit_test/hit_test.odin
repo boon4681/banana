@@ -12,42 +12,46 @@ hit_test :: proc(root: ^Node, x, y: f32) -> ^Node {
 @(private)
 hit_ctx :: proc(ctx: ^paint.Stacking_Context, x, y: f32) -> ^Node {
     for a in ctx.clips {
-        if !clip_contains(a, x, y) do return nil
+        if !transformed_clip_contains(a, ctx.clip_inverse, ctx.clip_invertible, x, y) do return nil
     }
     n := ctx.node
-    if n.clip_mode == .None || clip_contains(n, x, y) {
+    if n.clip_mode == .None || transformed_clip_contains(n, ctx.inverse, ctx.invertible, x, y) {
         #reverse for &c in ctx.pos {
             if hit := hit_ctx(&c, x, y); hit != nil do return hit
         }
-        if hit := hit_flow(n, x, y); hit != nil do return hit
+        if hit := hit_flow(n, ctx.inverse, ctx.invertible, x, y); hit != nil do return hit
         #reverse for &c in ctx.neg {
             if hit := hit_ctx(&c, x, y); hit != nil do return hit
         }
     }
-    if contains(n, x, y) do return n
+    if transformed_contains(n, ctx.inverse, ctx.invertible, x, y) do return n
     return nil
 }
 
 @(private)
-hit_flow :: proc(n: ^Node, x, y: f32) -> ^Node {
+hit_flow :: proc(n: ^Node, inverse: common.Mat3x3, invertible: bool, x, y: f32) -> ^Node {
     #reverse for c in n.children {
         if c.freed || paint.is_stacking_context(c) do continue
-        if c.clip_mode == .None || clip_contains(c, x, y) {
-            if hit := hit_flow(c, x, y); hit != nil do return hit
+        if c.clip_mode == .None || transformed_clip_contains(c, inverse, invertible, x, y) {
+            if hit := hit_flow(c, inverse, invertible, x, y); hit != nil do return hit
         }
-        if contains(c, x, y) do return c
+        if transformed_contains(c, inverse, invertible, x, y) do return c
     }
     return nil
 }
 
 @(private)
-contains :: proc(n: ^Node, x, y: f32) -> bool {
-    return common.rect_intersect(n.rect, x, y)
+transformed_contains :: proc(n: ^Node, inverse: common.Mat3x3, invertible: bool, x, y: f32) -> bool {
+    if !invertible do return false
+    p := common.transform_point(inverse, {x, y})
+    return common.rect_intersect(n.rect, p.x, p.y)
 }
 
 @(private)
-clip_contains :: proc(n: ^Node, x, y: f32) -> bool {
-    return common.rect_intersect(paint.clip_rect(n), x, y)
+transformed_clip_contains :: proc(n: ^Node, inverse: common.Mat3x3, invertible: bool, x, y: f32) -> bool {
+    if !invertible do return false
+    p := common.transform_point(inverse, {x, y})
+    return common.rect_intersect(paint.clip_rect(n), p.x, p.y)
 }
 
 ancestor_chain :: proc(target: ^Node) -> []^Node {

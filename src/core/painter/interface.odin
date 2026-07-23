@@ -34,7 +34,6 @@ MSDF_Quad :: struct {
 Glyph_Cache :: struct {
     mesh:           render.Glyph_Mesh,
     source_version: u64,
-    transform:      common.Mat3x3,
     color:          common.Color,
     valid:          bool,
 }
@@ -42,7 +41,6 @@ Glyph_Cache :: struct {
 Mesh_Cache :: struct {
     mesh:           render.Mesh,
     source_version: u64,
-    transform:      common.Mat3x3,
     valid:          bool,
 }
 

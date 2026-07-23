@@ -4,6 +4,7 @@ package render
 import "base:runtime"
 import "src:core/common"
 import gl "vendor:wasm/WebGL"
+import glm "core:math/linalg/glsl"
 
 // WebGL2 backend.
 
@@ -254,6 +255,7 @@ _draw_bound :: proc(
     texture: Texture,
     scissor: Maybe(common.Rect),
     blend:   Blend_Mode,
+    transform: common.Mat3x3 = common.Mat3X3_IDENTITY,
 ) {
     w, h := _bind_target(target)
     _scissor(h, scissor)
@@ -261,6 +263,7 @@ _draw_bound :: proc(
 
     gl.UseProgram(_state.program)
     gl.Uniform2f(_state.resolution, f32(w), f32(h))
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.program, "u_transform"), transmute(glm.mat3)transform)
 
     has_texture := false
     if id, ok := _texture_id(texture); ok {
@@ -334,6 +337,7 @@ _draw_mesh :: proc(
     vertices: []Vertex,
     indices:  []u32,
     version:  u64,
+    transform: common.Mat3x3,
     texture:  Texture,
     scissor:  Maybe(common.Rect),
     blend:    Blend_Mode,
@@ -350,7 +354,7 @@ _draw_mesh :: proc(
     }
     if m.count == 0 do return
 
-    _draw_bound(target, m.vao, m.count, texture, scissor, blend)
+    _draw_bound(target, m.vao, m.count, texture, scissor, blend, transform)
 }
 
 // The desktop curve renderer uses samplerBuffer, which WebGL2 does not expose.
@@ -363,6 +367,7 @@ _draw_glyphs :: proc(
     indices:  []u32,
     curves:   [][2]f32,
     version:  u64,
+    transform: common.Mat3x3,
     scissor:  Maybe(common.Rect),
 ) {
 }
@@ -374,6 +379,7 @@ _draw_glyph_mesh :: proc(
     vertices:         []Glyph_Vertex,
     indices:          []u32,
     geometry_version: u64,
+    transform:        common.Mat3x3,
     curves:           [][2]f32,
     curves_version:   u64,
     scissor:          Maybe(common.Rect),
@@ -387,6 +393,7 @@ _draw_msdf :: proc(
     vertices:    []Glyph_Vertex,
     indices:     []u32,
     version:     u64,
+    transform: common.Mat3x3,
     atlas:       Texture,
     pixel_range: f32,
     scissor:     Maybe(common.Rect),
@@ -411,6 +418,7 @@ _draw_msdf :: proc(
 
     gl.UseProgram(_state.msdf_program)
     gl.Uniform2f(_state.msdf_resolution, f32(w), f32(h))
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.msdf_program, "u_transform"), transmute(glm.mat3)transform)
     gl.Uniform1f(_state.msdf_range, pixel_range)
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindTexture(gl.TEXTURE_2D, atlas_id)

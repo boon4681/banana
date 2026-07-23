@@ -187,10 +187,21 @@ _pointer_callback :: proc(e: js.Event) {
 _wheel_callback :: proc(e: js.Event) {
 	w := cast(^Window)(e.user_data)
 	if w == nil do return
-	// DOM wheel deltas point down/right; GLFW scroll offsets point up/left.
+	dx := -f32(e.wheel.delta.x)
+	dy := -f32(e.wheel.delta.y)
+	#partial switch e.wheel.delta_mode {
+	case .Pixel:
+	case .Line:
+		dx *= 100.0 / 3.0
+		dy *= 100.0 / 3.0
+	case .Page:
+		scale := w.scale if w.scale > 0 else 1
+		dx *= f32(w.width) / scale * 0.875
+		dy *= f32(w.height) / scale * 0.875
+	}
 	_push_event(w, MOUSE_WHEEL{
-		dx = -f32(e.wheel.delta.x),
-		dy = -f32(e.wheel.delta.y),
+		dx = dx,
+		dy = dy,
 		x  = w.input.mouse_x,
 		y  = w.input.mouse_y,
 	})

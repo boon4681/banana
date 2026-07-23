@@ -6,6 +6,7 @@ import "core:c"
 import "core:strings"
 import "src:core/render"
 import "src:core/events"
+import "src:core/platform/wheel"
 import glfw "vendor:glfw"
 
 @(private = "file")
@@ -286,11 +287,13 @@ _scroll_callback :: proc "c" (handle: glfw.WindowHandle, dx, dy: f64) {
     context = runtime.default_context()
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w == nil do return
+    scale := w.scale if w.scale > 0 else 1
+    scroll_dx, scroll_dy := wheel._normalize_wheel(dx, dy, f32(w.width) / scale, f32(w.height) / scale)
     _push_event(w, MOUSE_WHEEL{
-        dx = f32(dx),
-        dy = f32(dy),
+        dx = scroll_dx,
+        dy = scroll_dy,
         x  = w.input.mouse_x,
-        y  = w.input.mouse_y
+        y  = w.input.mouse_y,
     })
 }
 

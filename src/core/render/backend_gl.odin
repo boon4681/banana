@@ -296,6 +296,8 @@ _draw :: proc(
 
     gl.UseProgram(_state.program)
     gl.Uniform2f(_state.loc_resolution, f32(target_w), f32(target_h))
+    identity := common.Mat3X3_IDENTITY
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.program, "u_transform"), 1, false, &identity[0,0])
 
     has_tex: bool
     if texture != INVALID_TEXTURE && int(texture) - 1 < len(_state.textures) {
@@ -324,6 +326,7 @@ _draw_mesh :: proc(
     vertices: []Vertex,
     indices: []u32,
     geometry_version: u64,
+    transform: common.Mat3x3,
     texture: Texture,
     scissor: Maybe(common.Rect),
     blend: Blend_Mode,
@@ -394,6 +397,8 @@ _draw_mesh :: proc(
 
     gl.UseProgram(_state.program)
     gl.Uniform2f(_state.loc_resolution, f32(target_w), f32(target_h))
+    matrix_values := transmute([9]f32)transform
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.program, "u_transform"), 1, false, &matrix_values[0])
 
     has_tex := false
     if texture != INVALID_TEXTURE && int(texture) - 1 < len(_state.textures) {
@@ -419,6 +424,7 @@ _draw_glyphs :: proc(
 	indices:        []u32,
 	curves:         [][2]f32,
 	curves_version: u64,
+	transform:      common.Mat3x3,
 	scissor:        Maybe(common.Rect),
 ) {
     if len(vertices) == 0 || len(indices) == 0 do return
@@ -447,6 +453,8 @@ _draw_glyphs :: proc(
 
     gl.UseProgram(_state.glyph_program)
     gl.Uniform2f(_state.locyph_resolution, f32(target_w), f32(target_h))
+    matrix_values := transmute([9]f32)transform
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.glyph_program, "u_transform"), 1, false, &matrix_values[0])
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
     gl.Uniform1i(gl.GetUniformLocation(_state.glyph_program, "u_curves"), 0)
@@ -467,6 +475,7 @@ _draw_glyph_mesh :: proc(
     vertices:         []Glyph_Vertex,
     indices:          []u32,
     geometry_version: u64,
+    transform:        common.Mat3x3,
     curves:           [][2]f32,
     curves_version:   u64,
     scissor:          Maybe(common.Rect),
@@ -533,6 +542,8 @@ _draw_glyph_mesh :: proc(
 
     gl.UseProgram(_state.glyph_program)
     gl.Uniform2f(_state.locyph_resolution, f32(target_w), f32(target_h))
+    matrix_values := transmute([9]f32)transform
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.glyph_program, "u_transform"), 1, false, &matrix_values[0])
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
     gl.Uniform1i(gl.GetUniformLocation(_state.glyph_program, "u_curves"), 0)
@@ -548,6 +559,7 @@ _draw_msdf_mesh :: proc(
     vertices:         []Glyph_Vertex,
     indices:          []u32,
     geometry_version: u64,
+    transform:        common.Mat3x3,
     atlas:            Texture,
     pixel_range:      f32,
     scissor:          Maybe(common.Rect),
@@ -603,6 +615,8 @@ _draw_msdf_mesh :: proc(
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     gl.UseProgram(_state.msdf_program)
     gl.Uniform2f(_state.msdf_loc_resolution, f32(target_w), f32(target_h))
+    matrix_values := transmute([9]f32)transform
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.msdf_program, "u_transform"), 1, false, &matrix_values[0])
     gl.Uniform1f(_state.msdf_loc_range, pixel_range)
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindTexture(gl.TEXTURE_2D, _state.textures[ti].id)
@@ -797,6 +811,8 @@ _stencil_push_clip :: proc() {
     gl.Disable(gl.SCISSOR_TEST)
     gl.UseProgram(_state.program)
     gl.Uniform2f(_state.loc_resolution, f32(_state.swapchain_w), f32(_state.swapchain_h))
+    identity := common.Mat3X3_IDENTITY
+    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.program, "u_transform"), 1, false, &identity[0,0])
     gl.Uniform1i(_state.loc_has_tex, 0)
     gl.BindVertexArray(_state.vao)
     gl.BindBuffer(gl.ARRAY_BUFFER, _state.vbo)

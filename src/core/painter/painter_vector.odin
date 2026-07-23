@@ -160,16 +160,13 @@ _triangles :: proc(p: Painter, points: [][2]f32, indices: []u32, color: common.C
 _mesh_cached :: proc(p:Painter,cache:^Mesh_Cache,source_version:u64,vertices:[]render.Vertex,indices:[]u32) {
 	if cache==nil do return
 	v:=_vs(p);_flush(v)
-	m:=_top(v);rebuild:=!cache.valid||cache.source_version!=source_version||cache.transform!=m
+	m:=_top(v);rebuild:=!cache.valid||cache.source_version!=source_version
 	geometry_version:=cache.mesh.version
-	out_vertices:=vertices
 	if rebuild {
 		if len(vertices)==0||len(indices)==0 do return
-		transformed:=make([]render.Vertex,len(vertices),context.temp_allocator)
-		for vertex,i in vertices { transformed[i]=vertex;transformed[i].pos=_pt(v,vertex.pos) }
-		out_vertices=transformed;cache.source_version=source_version;cache.transform=m;cache.valid=true;geometry_version+=1
+		cache.source_version=source_version;cache.valid=true;geometry_version+=1
 	}
-	render.RENDERER.draw_mesh(render.INVALID_RENDER_TARGET,&cache.mesh,out_vertices,indices,geometry_version,render.INVALID_TEXTURE,v.scissor,.Alpha)
+	render.RENDERER.draw_mesh(render.INVALID_RENDER_TARGET,&cache.mesh,vertices,indices,geometry_version,m,render.INVALID_TEXTURE,v.scissor,.Alpha)
 }
 
 @(private="file")
@@ -178,12 +175,12 @@ _glyphs :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad,
 	v := _vs(p)
 	// Different pipeline: emit pending geometry first so paint order holds.
 	_flush(v)
-	verts, indices := _glyph_geometry(v, quads, color)
-	render.RENDERER.draw_glyphs(render.INVALID_RENDER_TARGET, verts, indices, curves, version, v.scissor)
+	verts, indices := _glyph_geometry(quads, color)
+	render.RENDERER.draw_glyphs(render.INVALID_RENDER_TARGET, verts, indices, curves, version, _top(v), v.scissor)
 }
 
 @(private="file")
-_glyph_geometry :: proc(v: ^Vector_State, quads: []Glyph_Quad, color: common.Color) -> ([]render.Glyph_Vertex, []u32) {
+_glyph_geometry :: proc(quads: []Glyph_Quad, color: common.Color) -> ([]render.Glyph_Vertex, []u32) {
 	verts := make([dynamic]render.Glyph_Vertex, 0, len(quads) * 4, context.temp_allocator)
 	indices := make([dynamic]u32, 0, len(quads) * 6, context.temp_allocator)
 	for q in quads {
@@ -199,7 +196,7 @@ _glyph_geometry :: proc(v: ^Vector_State, quads: []Glyph_Quad, color: common.Col
 		}
 		for c in corners {
 			append(&verts, render.Glyph_Vertex{
-				pos         = _pt(v, c.pos),
+				pos         = c.pos,
 				uv          = c.uv,
 				color       = color,
 				curve_base  = q.curve_base,
@@ -218,23 +215,22 @@ _glyphs_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, cur
 	_flush(v)
 
 	m := _top(v)
-	rebuild := !cache.valid || cache.source_version != source_version || cache.transform != m || cache.color != color
+	rebuild := !cache.valid || cache.source_version != source_version || cache.color != color
 	vertices: []render.Glyph_Vertex
 	indices: []u32
 	geometry_version := cache.mesh.version
 	if rebuild {
-		vertices, indices = _glyph_geometry(v, quads, color)
+		vertices, indices = _glyph_geometry(quads, color)
 		cache.source_version = source_version
-		cache.transform = m
 		cache.color = color
 		cache.valid = true
 		geometry_version += 1
 	}
-	render.RENDERER.draw_glyph_mesh(render.INVALID_RENDER_TARGET, &cache.mesh, vertices, indices, geometry_version, curves, version, v.scissor)
+	render.RENDERER.draw_glyph_mesh(render.INVALID_RENDER_TARGET, &cache.mesh, vertices, indices, geometry_version, m, curves, version, v.scissor)
 }
 
 @(private="file")
-_msdf_geometry :: proc(v: ^Vector_State, quads: []MSDF_Quad, color: common.Color) -> ([]render.Glyph_Vertex, []u32) {
+_msdf_geometry :: proc(quads: []MSDF_Quad, color: common.Color) -> ([]render.Glyph_Vertex, []u32) {
 	verts := make([dynamic]render.Glyph_Vertex, 0, len(quads) * 4, context.temp_allocator)
 	indices := make([dynamic]u32, 0, len(quads) * 6, context.temp_allocator)
 	for q in quads {
@@ -246,7 +242,7 @@ _msdf_geometry :: proc(v: ^Vector_State, quads: []MSDF_Quad, color: common.Color
 			{{q.rect.x, q.rect.y + q.rect.h}, {q.uv[0], q.uv[1]}},
 		}
 		for c in corners {
-			append(&verts, render.Glyph_Vertex{pos = _pt(v, c.pos), uv = c.uv, color = color})
+			append(&verts, render.Glyph_Vertex{pos = c.pos, uv = c.uv, color = color})
 		}
 		append(&indices, base, base + 1, base + 2, base, base + 2, base + 3)
 	}
@@ -269,19 +265,18 @@ _msdf_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas
 	}
 
 	m := _top(v)
-	rebuild := !cache.valid || cache.source_version != source_version || cache.transform != m || cache.color != color
+	rebuild := !cache.valid || cache.source_version != source_version || cache.color != color
 	vertices: []render.Glyph_Vertex
 	indices: []u32
 	geometry_version := cache.mesh.version
 	if rebuild {
-		vertices, indices = _msdf_geometry(v, quads, color)
+		vertices, indices = _msdf_geometry(quads, color)
 		cache.source_version = source_version
-		cache.transform = m
 		cache.color = color
 		cache.valid = true
 		geometry_version += 1
 	}
-	render.RENDERER.draw_msdf_mesh(render.INVALID_RENDER_TARGET, &cache.mesh, vertices, indices, geometry_version, v.msdf_atlas, pixel_range, v.scissor)
+	render.RENDERER.draw_msdf_mesh(render.INVALID_RENDER_TARGET, &cache.mesh, vertices, indices, geometry_version, m, v.msdf_atlas, pixel_range, v.scissor)
 }
 
 @(private="file")

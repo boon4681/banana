@@ -32,3 +32,32 @@ transform_to_matrix :: proc(t: Transform) -> Mat3x3 {
         0, 0, 1,
     }
 }
+
+transform_at_matrix :: proc(t: Transform, at: [2]f32) -> Mat3x3 {
+    adjusted := t
+    adjusted.origin += at
+    return transform_to_matrix(adjusted)
+}
+
+affine_inverse :: proc(m: Mat3x3) -> (Mat3x3, bool) {
+    det := m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0]
+    if math.abs(det) <= 1e-8 do return Mat3X3_IDENTITY, false
+
+    inv_det := 1 / det
+    a :=  m[1, 1] * inv_det
+    b := -m[0, 1] * inv_det
+    c := -m[1, 0] * inv_det
+    d :=  m[0, 0] * inv_det
+    tx := -(a * m[0, 2] + b * m[1, 2])
+    ty := -(c * m[0, 2] + d * m[1, 2])
+    return Mat3x3{
+        a, b, tx,
+        c, d, ty,
+        0, 0, 1,
+    }, true
+}
+
+transform_point :: proc(m: Mat3x3, p: [2]f32) -> [2]f32 {
+    q := m * [3]f32{p.x, p.y, 1}
+    return {q.x, q.y}
+}

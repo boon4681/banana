@@ -64,6 +64,7 @@ _draw_mesh :: proc(
     vertices:[]Vertex,
     indices:[]u32,
     geometry_version:u64,
+    transform:common.Mat3x3,
     texture:Texture,
     scissor:Maybe(common.Rect),
     blend:Blend_Mode
@@ -78,6 +79,7 @@ _draw_glyphs :: proc(
 	indices:        []u32,
 	curves:         [][2]f32,
 	curves_version: u64,
+	transform:      common.Mat3x3,
 	scissor:        Maybe(common.Rect),
 ) {
     _ = target; _ = vertices; _ = indices; _ = curves; _ = curves_version; _ = scissor
@@ -91,6 +93,7 @@ _draw_glyph_mesh :: proc(
     vertices: []Glyph_Vertex,
     indices: []u32,
     geometry_version: u64,
+    transform: common.Mat3x3,
     curves: [][2]f32,
     curves_version: u64,
     scissor: Maybe(common.Rect),
@@ -105,6 +108,7 @@ _draw_msdf_mesh :: proc(
     vertices: []Glyph_Vertex,
     indices: []u32,
     geometry_version: u64,
+    transform: common.Mat3x3,
     atlas: Texture,
     pixel_range: f32,
     scissor: Maybe(common.Rect),
