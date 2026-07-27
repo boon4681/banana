@@ -43,6 +43,9 @@ Window :: struct {
     queue:      [dynamic]EVENT,
 }
 
+@(private="package", thread_local)
+_active_window: ^Window
+
 New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
     w := new(Window)
     w.allocator = context.allocator
@@ -239,6 +242,8 @@ handle :: proc(w: ^Window, ev: EVENT) {
     #partial switch e in ev {
     case MOUSE_MOVED:
         input.on_mouse_move(&w.input, e.x, e.y)
+    case MOUSE_LEFT:
+        input.on_mouse_leave(&w.input)
     case MOUSE_BUTTON:
         if e.action == PRESS {
             input.on_mouse_down(&w.input, e.button, e.mods)
@@ -270,6 +275,7 @@ update :: proc(w: ^Window) -> bool {
 }
 
 make_current :: proc(w: ^Window) {
+    _active_window = w
     PLATFORM.set_active_state(&w.platform_state[0])
     render.RENDERER.set_active_state(&w.renderer_state[0])
     render.RENDERER.make_current()
@@ -302,6 +308,61 @@ set_title :: proc(w: ^Window, title: string) {
     if w == nil do return
     PLATFORM.set_active_state(&w.platform_state[0])
     PLATFORM.set_title(title)
+}
+
+// Screen-space position of the window's top-left corner.
+get_position :: proc(w: ^Window) -> (x, y: int) {
+    if w == nil do return 0, 0
+    PLATFORM.set_active_state(&w.platform_state[0])
+    return PLATFORM.get_position()
+}
+
+// Moves the window. Dragging a custom title bar is this plus the cursor delta.
+set_position :: proc(w: ^Window, x, y: int) {
+    if w == nil do return
+    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_position(x, y)
+}
+
+set_size :: proc(w: ^Window, width, height: int) {
+    if w == nil do return
+    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_size(width, height)
+}
+
+// Constrains interactive resizing.
+set_size_limits :: proc(w: ^Window, min_width, min_height, max_width, max_height: int) {
+    if w == nil do return
+    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_size_limits(min_width, min_height, max_width, max_height)
+}
+
+set_min_size :: proc(w: ^Window, width, height: int) {
+    set_size_limits(w, width, height, 0, 0)
+}
+
+set_cursor :: proc(w: ^Window, shape: Cursor) {
+    if w == nil do return
+    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_cursor(shape)
+}
+
+minimize :: proc(w: ^Window) {
+    if w == nil do return
+    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.minimize()
+}
+
+is_maximized :: proc(w: ^Window) -> bool {
+    if w == nil do return false
+    PLATFORM.set_active_state(&w.platform_state[0])
+    return PLATFORM.is_maximized()
+}
+
+toggle_maximize :: proc(w: ^Window) {
+    if w == nil do return
+    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.toggle_maximize()
 }
 
 free :: proc(w: ^Window) {
