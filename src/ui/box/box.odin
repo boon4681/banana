@@ -3,6 +3,8 @@ package box
 import "src:core/node"
 import "src:core/painter"
 
+BANANA_COMPONENT :: true
+
 Box_Style :: struct {
     using base: node.Style,
     background: Color,
@@ -26,15 +28,15 @@ New :: proc(style: Box_Style = {}, key: Maybe(string) = nil) -> ^Box {
     return n
 }
 
-// Yoga's defaults (flex-shrink 0, align-content flex-start) don't match CSS.
+// Approximate CSS block and inline flow with Yoga.
 @(private="file")
 _apply_div_defaults :: proc(n: ^Box) {
     s := n->style()
-    s->set_flex_direction(.Column)
-    s->set_align_items(.Stretch)
-    s->set_align_content(.Stretch)
+    s->set_flex_direction(.Row)
+    s->set_wrap(.Wrap)
+    s->set_align_items(.FlexStart)
+    s->set_align_content(.FlexStart)
     s->set_flex_shrink(1)
-    s->set_width(0, node.auto)
     s->set_height(0, node.auto)
 }
 
