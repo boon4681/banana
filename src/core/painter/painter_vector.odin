@@ -241,8 +241,9 @@ _msdf_geometry :: proc(quads: []MSDF_Quad, color: common.Color) -> ([]render.Gly
 			{{q.rect.x + q.rect.w, q.rect.y + q.rect.h}, {q.uv[2], q.uv[1]}},
 			{{q.rect.x, q.rect.y + q.rect.h}, {q.uv[0], q.uv[1]}},
 		}
+		quad_color := q.tint if q.has_tint else color
 		for c in corners {
-			append(&verts, render.Glyph_Vertex{pos = c.pos, uv = c.uv, color = color})
+			append(&verts, render.Glyph_Vertex{pos = c.pos, uv = c.uv, color = quad_color})
 		}
 		append(&indices, base, base + 1, base + 2, base, base + 2, base + 3)
 	}

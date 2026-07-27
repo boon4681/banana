@@ -29,6 +29,8 @@ MSDF_Quad :: struct {
     rect: common.Rect,
     // left, bottom, right, top in atlas UV coordinates.
     uv: [4]f32,
+    tint:     common.Color,
+    has_tint: bool,
 }
 
 Glyph_Cache :: struct {
