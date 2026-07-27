@@ -3,8 +3,8 @@ package input
 import "src:core/events"
 import "src:core/hit_test"
 
-dispatch :: proc(target: ^Node, type: string, data: rawptr = nil) -> events.Signal {
-	s := events.Signal {
+dispatch :: proc(target: ^Node, type: string, data: rawptr = nil) -> events.Event_Signal {
+	s := events.Event_Signal {
 		type   = type,
 		target = target,
 		data   = data,

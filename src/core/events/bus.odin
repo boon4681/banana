@@ -2,7 +2,7 @@ package events
 
 // Bus
 Listener :: struct {
-	callback: proc(s: ^Signal),
+	callback: proc(s: ^Event_Signal),
 	capture:  bool, // fires in capture phase rather than bubble
 	once:     bool,
 }
@@ -23,7 +23,7 @@ bus_destroy :: proc(b: ^Bus) {
 on :: proc(
 	b: ^Bus,
 	type: string,
-	callback: proc(s: ^Signal),
+	callback: proc(s: ^Event_Signal),
 	capture := false,
 	once := false,
 ) -> uint {
@@ -36,7 +36,7 @@ on :: proc(
 	return len(list)
 }
 
-off :: proc(b: ^Bus, type: string, callback: proc(s: ^Signal)) {
+off :: proc(b: ^Bus, type: string, callback: proc(s: ^Event_Signal)) {
 	list, ok := &b.listeners[type]
 	if !ok do return
 	for i := len(list) - 1; i >= 0; i -= 1 {
@@ -46,7 +46,7 @@ off :: proc(b: ^Bus, type: string, callback: proc(s: ^Signal)) {
 
 // Fire listeners registered on THIS bus for the current phase. Returns false if
 // immediate propagation was stopped (caller should halt the walk).
-emit_local :: proc(b: ^Bus, s: ^Signal) -> (continue_walk: bool) {
+emit_local :: proc(b: ^Bus, s: ^Event_Signal) -> (continue_walk: bool) {
 	list, ok := &b.listeners[s.type]
 	if !ok do return true
 

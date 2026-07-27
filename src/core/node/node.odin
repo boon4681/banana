@@ -1,5 +1,6 @@
 package node
 
+import "core:fmt"
 import "core:c"
 import "core:strings"
 import "base:runtime"
@@ -54,6 +55,9 @@ BaseNode :: struct {
     process: proc(self: ^BaseNode), // this is update method for node logic in user space
 
     add:            proc(self: ^BaseNode, kids: ..^BaseNode) -> ^BaseNode,
+    insert:         proc(self: ^BaseNode, kid: ^BaseNode, index: int) -> ^BaseNode,
+    remove:         proc(self: ^BaseNode, kid: ^BaseNode) -> ^BaseNode,
+    index_of:       proc(self: ^BaseNode, kid: ^BaseNode) -> int,
     compute_layout: proc(self: ^BaseNode, width: f32 = UNDEFINED, height: f32 = UNDEFINED, dir: YG.Direction = .LTR),
     find:           proc(self: ^BaseNode, path: string) -> ^BaseNode,
     get_rect:       proc(self: ^BaseNode, which: RectType = .Border) -> common.Rect,
@@ -63,8 +67,8 @@ BaseNode :: struct {
     measure:        MeasureCallback,
     dirty:          proc(self: ^BaseNode),
 
-    on:        proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal), capture := false, once := false) -> uint,
-    off:       proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Signal)),
+    on:        proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Event_Signal), capture := false, once := false) -> uint,
+    off:       proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Event_Signal)),
     on_awake:  proc(self: ^BaseNode), // EVENT fired after node being awake
     on_free:   proc(self: ^BaseNode), // EVENT CALLBACK fired before free
     on_layout: proc(self: ^BaseNode), // EVENT CALLBACK fired before layout update
@@ -119,6 +123,9 @@ Init :: proc(n: ^Node, key: Maybe(string) = nil) {
     n.draw = _node_draw
 
     n.add = _node_add
+    n.insert = _node_insert
+    n.remove = _node_remove
+    n.index_of = _node_index_of
     n.compute_layout = _node_compute_layout
     n.find = _node_find
     n.get_rect = _node_get_rect
@@ -166,17 +173,52 @@ _measure_trampoline :: proc "c" (
 @(private="file")
 _node_add :: proc (self: ^BaseNode, kids: ..^BaseNode) -> ^BaseNode {
     for k in kids {
-        k.parent = self
-        YG.NodeInsertChild(self.raw, k.raw, c.size_t(len(self.children)))
-        if k.window != nil {
-            if k._internal_propagate_awake == nil {
-                panic("EXIT ERROR NODE IS NOT SETUP PROPERLY")
-            }
-            k->_internal_propagate_awake()
-        }
-        append(&self.children, k)
+        _node_insert(self, k, len(self.children))
     }
     return self
+}
+
+@(private="file")
+_node_insert :: proc(self: ^BaseNode, k: ^BaseNode, index: int) -> ^BaseNode {
+    if k == nil do fmt.println("warning: node inserted is nil")
+    if self == nil || k == nil do return self
+
+    at := index
+    if at < 0 do at = 0
+    if at > len(self.children) do at = len(self.children)
+
+    k.parent = self
+    YG.NodeInsertChild(self.raw, k.raw, c.size_t(at))
+    inject_at(&self.children, at, k)
+    if k.window != nil {
+        if k._internal_propagate_awake == nil {
+            panic("EXIT ERROR NODE IS NOT SETUP PROPERLY")
+        }
+        k->_internal_propagate_awake()
+    }
+    return self
+}
+
+@(private="file")
+_node_remove :: proc(self: ^BaseNode, kid: ^BaseNode) -> ^BaseNode {
+    if self == nil || kid == nil do return self
+
+    at := _node_index_of(self, kid)
+    if at < 0 do return self
+
+    YG.NodeRemoveChild(self.raw, kid.raw)
+    ordered_remove(&self.children, at)
+    kid.parent = nil
+    return self
+}
+
+@(private="file")
+_node_index_of :: proc(self: ^BaseNode, kid: ^BaseNode) -> int {
+    if self == nil do return -1
+    for child, i in self.children {
+        if child == kid do return i
+    }
+    return -1
 }
 
 @(private="file")
@@ -260,12 +302,12 @@ _node_free :: proc(self: ^BaseNode) {
 }
 
 @(private="file")
-_on :: proc(n: ^Node, type: string, cb: proc(s: ^events.Signal), capture := false, once := false) -> uint {
+_on :: proc(n: ^Node, type: string, cb: proc(s: ^events.Event_Signal), capture := false, once := false) -> uint {
     return events.on(&n.bus, type, cb, capture, once)
 }
 
 @(private="file")
-_off :: proc(n: ^Node, type: string, cb: proc(s: ^events.Signal)) {
+_off :: proc(n: ^Node, type: string, cb: proc(s: ^events.Event_Signal)) {
     events.off(&n.bus, type, cb)
 }
 

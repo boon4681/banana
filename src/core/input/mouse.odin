@@ -62,6 +62,17 @@ on_mouse_move :: proc(im: ^Input_State, x, y: f32) {
     }
 }
 
+// Pointer left the window.
+on_mouse_leave :: proc(im: ^Input_State) {
+    _active_input_state = im
+    if im.captured != nil do return
+    if im.hovered == nil do return
+
+    ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, mods = im.mods}
+    dispatch(im.hovered, events.MOUSE_LEAVE_EVENT, &ev)
+    im.hovered = nil
+}
+
 // Button pressed. Dispatches "mousedown"; tracks the node for click/focus.
 // `mods` records the keyboard modifier state at press time so handlers can
 // query it via modifiers() (GLFW delivers mods on the button callback).
