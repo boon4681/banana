@@ -116,3 +116,9 @@ _free :: proc(n:^SVG_Node) {
     free(d)
     free(n._internal_style)
 }
+
+// Exposes the raster cache so benchmarks can force re-rasterization.
+_internal_dbg_cache_of :: proc(n: ^SVG_Node) -> ^svg.Cache {
+    if n == nil do return nil
+    return &_data(n).cache
+}

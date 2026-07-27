@@ -10,6 +10,8 @@ import "src:core/platform"
 import "src:core/render"
 import "src:core/svg"
 
+BANANA_COMPONENT :: true
+
 // Mirrors CSS object-fit.
 Fit :: enum {
     Fill,       // stretch to the layout rect, ignoring aspect ratio
