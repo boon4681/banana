@@ -1,7 +1,7 @@
 #version 330 core
-in vec2 a_pos;
-in vec2 a_uv;
-in vec4 a_color;
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec2 a_uv;
+layout(location = 2) in vec4 a_color;
 out vec2 v_uv;
 out vec4 v_color;
 uniform vec2 u_resolution;
