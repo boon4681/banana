@@ -119,6 +119,48 @@ _set_title :: proc(title: string) {
 }
 
 @(private = "file")
+_get_position :: proc() -> (x, y: int) {
+	fmt.println("warning: get_position is unsupported on this platform and returns (0, 0)")
+	return 0, 0
+}
+
+@(private = "file")
+_set_position :: proc(x, y: int) {
+	fmt.println("warning: set_position is unsupported on this platform and has no effect")
+}
+
+@(private = "file")
+_set_size :: proc(w, h: int) {
+	fmt.println("warning: set_size is unsupported on this platform and has no effect")
+}
+
+@(private = "file")
+_set_size_limits :: proc(min_w, min_h, max_w, max_h: int) {
+	fmt.println("warning: set_size_limits is unsupported on this platform and has no effect")
+}
+
+@(private = "file")
+_set_cursor :: proc(shape: Cursor) {
+	fmt.println("warning: set_cursor is unsupported on this platform and has no effect")
+}
+
+@(private = "file")
+_minimize :: proc() {
+	fmt.println("warning: minimize is unsupported on this platform and has no effect")
+}
+
+@(private = "file")
+_is_maximized :: proc() -> bool {
+	fmt.println("warning: is_maximized is unsupported on this platform and returns false")
+	return false
+}
+
+@(private = "file")
+_toggle_maximize :: proc() {
+	fmt.println("warning: toggle_maximize is unsupported on this platform and has no effect")
+}
+
+@(private = "file")
 _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
 	s := cast(^Web_State)(state)
 	_active = s
@@ -131,6 +173,7 @@ _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
 	js.add_event_listener(s.canvas, .Pointer_Move, ptr, _pointer_callback)
 	js.add_event_listener(s.canvas, .Pointer_Down, ptr, _pointer_callback)
 	js.add_event_listener(s.canvas, .Pointer_Up, ptr, _pointer_callback)
+	js.add_event_listener(s.canvas, .Pointer_Leave, ptr, _pointer_callback)
 	js.add_event_listener(s.canvas, .Wheel, ptr, _wheel_callback)
 	js.add_window_event_listener(.Key_Down, ptr, _key_callback)
 	js.add_window_event_listener(.Key_Up, ptr, _key_callback)
@@ -146,6 +189,7 @@ _remove_listeners :: proc(s: ^Web_State) {
 	js.remove_event_listener(s.canvas, .Pointer_Move, ptr, _pointer_callback)
 	js.remove_event_listener(s.canvas, .Pointer_Down, ptr, _pointer_callback)
 	js.remove_event_listener(s.canvas, .Pointer_Up, ptr, _pointer_callback)
+	js.remove_event_listener(s.canvas, .Pointer_Leave, ptr, _pointer_callback)
 	js.remove_event_listener(s.canvas, .Wheel, ptr, _wheel_callback)
 	js.remove_window_event_listener(.Key_Down, ptr, _key_callback)
 	js.remove_window_event_listener(.Key_Up, ptr, _key_callback)
@@ -164,6 +208,8 @@ _pointer_callback :: proc(e: js.Event) {
 	#partial switch e.kind {
 	case .Pointer_Move:
 		_push_event(w, MOUSE_MOVED{x = x, y = y})
+	case .Pointer_Leave:
+		_push_event(w, MOUSE_LEFT{})
 	case .Pointer_Down:
 		_push_event(w, MOUSE_BUTTON{
 			button = int(e.mouse.button),
@@ -421,6 +467,14 @@ PLATFORM_WEB :: Platform_Interface {
 	content_scale       = _content_scale,
 	request_close       = _request_close,
 	set_title           = _set_title,
+	get_position        = _get_position,
+	set_position        = _set_position,
+	set_size            = _set_size,
+	set_size_limits     = _set_size_limits,
+	set_cursor          = _set_cursor,
+	minimize            = _minimize,
+	is_maximized        = _is_maximized,
+	toggle_maximize     = _toggle_maximize,
 	set_window_user_ptr = _set_window_user_ptr,
 	clipboard_get       = _clipboard_get,
 	clipboard_set       = _clipboard_set,

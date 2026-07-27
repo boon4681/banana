@@ -11,7 +11,7 @@ import glfw "vendor:glfw"
 
 @(private = "file")
 GLFW_State :: struct {
-    handle: glfw.WindowHandle,
+    handle:  glfw.WindowHandle,
     visible: bool
 }
 
@@ -33,6 +33,11 @@ _set_active_state :: proc(state: rawptr) {
     _active = cast(^GLFW_State)(state)
 }
 
+@(private = "package")
+_active_glfw_handle :: proc() -> glfw.WindowHandle {
+    return _active.handle if _active != nil else nil
+}
+
 @(private = "file")
 _init :: proc(
 	state: rawptr,
@@ -48,6 +53,8 @@ _init :: proc(
     glfw.WindowHint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
     glfw.WindowHint(glfw.OPENGL_FORWARD_COMPAT, 1)
     glfw.WindowHint(glfw.SAMPLES, i32(opts.msaa_samples))
+    glfw.WindowHint(glfw.DECORATED, is_decorated(opts) ? 1 : 0)
+    glfw.WindowHint(glfw.TRANSPARENT_FRAMEBUFFER, opts.transparent ? 1 : 0)
     _active.visible = false
     glfw.WindowHint(glfw.VISIBLE, 0)
     _active.handle = glfw.CreateWindow(i32(opts.width), i32(opts.height), opts.title, nil, nil)
@@ -71,6 +78,7 @@ _shutdown :: proc() {
     glfw.SetWindowUserPointer(_active.handle, nil)
     glfw.SetWindowRefreshCallback(_active.handle, nil)
     glfw.SetCursorPosCallback(_active.handle, nil)
+    glfw.SetCursorEnterCallback(_active.handle, nil)
     glfw.SetMouseButtonCallback(_active.handle, nil)
     glfw.SetScrollCallback(_active.handle, nil)
     glfw.SetKeyCallback(_active.handle, nil)
@@ -117,11 +125,87 @@ _set_title :: proc(title: string) {
 }
 
 @(private = "file")
+_get_position :: proc() -> (x, y: int) {
+    px, py := glfw.GetWindowPos(_active.handle)
+    return int(px), int(py)
+}
+
+@(private = "file")
+_set_position :: proc(x, y: int) {
+    glfw.SetWindowPos(_active.handle, i32(x), i32(y))
+}
+
+@(private = "file")
+_set_size :: proc(w, h: int) {
+    glfw.SetWindowSize(_active.handle, i32(w), i32(h))
+}
+
+@(private = "file")
+_set_size_limits :: proc(min_w, min_h, max_w, max_h: int) {
+    if _active == nil || _active.handle == nil do return
+    glfw.SetWindowSizeLimits(
+        _active.handle,
+        _limit(min_w),
+        _limit(min_h),
+        _limit(max_w),
+        _limit(max_h),
+    )
+}
+
+@(private = "file")
+_limit :: proc(v: int) -> i32 {
+    return i32(v) if v > 0 else glfw.DONT_CARE
+}
+
+@(private = "file", thread_local)
+_cursors: [Cursor]glfw.CursorHandle
+
+@(private = "file")
+_set_cursor :: proc(shape: Cursor) {
+    if _active == nil || _active.handle == nil do return
+    if _cursors[shape] == nil {
+        glfw_shape: i32
+        switch shape {
+        case .Arrow:     glfw_shape = glfw.ARROW_CURSOR
+        case .Hand:      glfw_shape = glfw.POINTING_HAND_CURSOR
+        case .Text:      glfw_shape = glfw.IBEAM_CURSOR
+        case .Resize_EW:   glfw_shape = glfw.RESIZE_EW_CURSOR
+        case .Resize_NS:   glfw_shape = glfw.RESIZE_NS_CURSOR
+        case .Resize_NWSE: glfw_shape = glfw.RESIZE_NWSE_CURSOR
+        case .Resize_NESW: glfw_shape = glfw.RESIZE_NESW_CURSOR
+        }
+        _cursors[shape] = glfw.CreateStandardCursor(glfw_shape)
+    }
+    glfw.SetCursor(_active.handle, _cursors[shape])
+}
+
+@(private = "file")
+_minimize :: proc() {
+    glfw.IconifyWindow(_active.handle)
+}
+
+@(private = "file")
+_is_maximized :: proc() -> bool {
+    if _active == nil || _active.handle == nil do return false
+    return glfw.GetWindowAttrib(_active.handle, glfw.MAXIMIZED) != 0
+}
+
+@(private = "file")
+_toggle_maximize :: proc() {
+    if glfw.GetWindowAttrib(_active.handle, glfw.MAXIMIZED) != 0 {
+        glfw.RestoreWindow(_active.handle)
+    } else {
+        glfw.MaximizeWindow(_active.handle)
+    }
+}
+
+@(private = "file")
 _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
     _active = cast(^GLFW_State)(state)
     glfw.SetWindowUserPointer(_active.handle, ptr)
     glfw.SetWindowRefreshCallback(_active.handle, _refresh_callback)
     glfw.SetCursorPosCallback(_active.handle, _cursor_pos_callback)
+    glfw.SetCursorEnterCallback(_active.handle, _cursor_enter_callback)
     glfw.SetMouseButtonCallback(_active.handle, _mouse_button_callback)
     glfw.SetScrollCallback(_active.handle, _scroll_callback)
     glfw.SetKeyCallback(_active.handle, _key_callback)
@@ -269,6 +353,15 @@ _cursor_pos_callback :: proc "c" (handle: glfw.WindowHandle, xpos, ypos: f64) {
 }
 
 @(private="file")
+_cursor_enter_callback :: proc "c" (handle: glfw.WindowHandle, entered: c.int) {
+    context = runtime.default_context()
+    if entered != 0 do return
+    w := cast(^Window)(glfw.GetWindowUserPointer(handle))
+    if w == nil do return
+    _push_event(w, MOUSE_LEFT{})
+}
+
+@(private="file")
 _mouse_button_callback :: proc "c" (handle: glfw.WindowHandle, button, action, mods: c.int) {
     context = runtime.default_context()
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
@@ -313,7 +406,7 @@ _make_current :: proc(state: rawptr) {
 _present :: proc(state: rawptr) {
     glfw.SwapBuffers(cast(glfw.WindowHandle)(state))
     if _active.visible == false {
-        glfw.ShowWindow(cast(glfw.WindowHandle)(state)) 
+        glfw.ShowWindow(cast(glfw.WindowHandle)(state))
         _active.visible = true
     }
 }
@@ -340,6 +433,14 @@ PLATFORM_GLFW :: Platform_Interface{
     content_scale       = _content_scale,
     request_close       = _request_close,
     set_title           = _set_title,
+    get_position        = _get_position,
+    set_position        = _set_position,
+    set_size            = _set_size,
+    set_size_limits     = _set_size_limits,
+    set_cursor          = _set_cursor,
+    minimize            = _minimize,
+    is_maximized        = _is_maximized,
+    toggle_maximize     = _toggle_maximize,
     set_window_user_ptr = _set_window_user_ptr,
     clipboard_get       = _clipboard_get,
     clipboard_set       = _clipboard_set,

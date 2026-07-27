@@ -10,12 +10,18 @@ Init_Options :: struct {
     title:        cstring,  // cstring so literals auto-coerce; passed straight to the OS
     vsync:        bool,
     msaa_samples: u32,
+    decorated:    Maybe(bool),
+    transparent:  bool,
     // Web only: id of the <canvas> this window renders into.
     // Empty falls back to "banana-canvas".
     canvas: string,
 }
 
-DEFAULT_OPTIONS :: Init_Options{width = 800, height = 600, title = "banana", vsync = true, msaa_samples = 4}
+DEFAULT_OPTIONS :: Init_Options{width = 800, height = 600, title = "banana", vsync = true, msaa_samples = 4, decorated = true}
+
+is_decorated :: proc(opts: Init_Options) -> bool {
+    return opts.decorated.? or_else true
+}
 
 Platform_Interface :: struct #all_or_none {
     state_size:          proc() -> int,
@@ -28,6 +34,14 @@ Platform_Interface :: struct #all_or_none {
     content_scale:       proc() -> f32, // browser devicePixelRatio equivalent
     request_close:       proc(),
     set_title:           proc(title: string),
+    get_position:        proc() -> (x, y: int),
+    set_position:        proc(x, y: int),
+    set_size:            proc(w, h: int),
+    set_size_limits:     proc(min_w, min_h, max_w, max_h: int),
+    set_cursor:          proc(shape: Cursor),
+    minimize:            proc(),
+    is_maximized:        proc() -> bool,
+    toggle_maximize:     proc(), // Toggles between maximized and restored.
     set_window_user_ptr: proc(state: rawptr, ptr: rawptr),
     clipboard_get:       proc(allocator: runtime.Allocator) -> string,
     clipboard_set:       proc(text: string),
@@ -35,6 +49,7 @@ Platform_Interface :: struct #all_or_none {
 
 RESIZED      :: struct { fb_w, fb_h: i32, width, height: f32 }
 MOUSE_MOVED  :: struct { x, y: f32 }
+MOUSE_LEFT   :: struct {}
 MOUSE_BUTTON :: struct { button, action: int, mods: events.Mods, x, y: f32 }
 MOUSE_WHEEL  :: struct { dx, dy, x, y: f32 }
 KEY          :: struct { code: events.Key, key: rune, scancode, action: int, mods: events.Mods }
@@ -43,6 +58,7 @@ TYPED        :: struct { codepoint: rune }
 EVENT :: union {
 	RESIZED,
 	MOUSE_MOVED,
+	MOUSE_LEFT,
 	MOUSE_BUTTON,
 	MOUSE_WHEEL,
 	KEY,
