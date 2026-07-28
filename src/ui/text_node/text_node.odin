@@ -38,6 +38,17 @@ _Text_Data :: struct {
     quad_version:   u64,
     glyph_cache:    painter.Glyph_Cache,
     msdf_cache:     painter.Glyph_Cache,
+
+    // COLR v1 bitmaps bypass the outline caches.
+    color_quads: []_Color_Quad,
+}
+
+@(private = "file")
+_Color_Quad :: struct {
+    rect: common.Rect,
+    face: ^text.Face,
+    gid:  u32,
+    size: f32,
 }
 
 New :: proc(str: string = "", key: Maybe(string) = nil) -> ^Text_Node {
@@ -155,6 +166,11 @@ _draw_cached :: proc(d: ^_Text_Data, p: painter.Painter, st: node.Text_Style) {
         curves, version := text.curve_data()
         painter.glyphs_cached(p, &d.glyph_cache, d.quad_version, curves, version, d.quads, st.color)
     }
+    for q in d.color_quads {
+        bm, ok := text.color_bitmap_cached(q.face, q.gid, q.size)
+        if !ok || bm.image == nil do continue
+        painter.image(p, bm.image, q.rect)
+    }
 }
 
 @(private = "file")
@@ -162,9 +178,27 @@ _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_m
     st := _resolve(self)
     _ensure_shaped(self, st.font, st.font_weight)
     d := _data(self)
-    if st.font == nil || len(d.shaped.words) == 0 do return 0, 0
+    if st.font == nil do return 0, 0
 
     size := st.font_size
+    // Give all-space inline separators one collapsed advance.
+    if len(d.shaped.words) == 0 {
+        if len(d.str) == 0 do return 0, 0
+        out_w = d.shaped.space_advance * size
+        out_h = _line_height_em(st) * size
+        switch w_mode {
+        case .Exactly: out_w = w
+        case .AtMost:  out_w = min(out_w, w)
+        case .Undefined:
+        }
+        switch h_mode {
+        case .Exactly: out_h = h
+        case .AtMost:  out_h = min(out_h, h)
+        case .Undefined:
+        }
+        return out_w, out_h
+    }
+
     max_w_em := f32(math.F32_MAX)
     if w_mode != .Undefined && !math.is_nan(w) && w > 0 do max_w_em = w / size
 
@@ -236,6 +270,8 @@ _draw :: proc(self: ^Text_Node) {
     quads := make([dynamic]painter.Glyph_Quad, 0, total_glyphs, context.allocator)
     delete(d.msdf_quads)
     msdf_quads := make([dynamic]painter.MSDF_Quad, 0, total_glyphs, context.allocator)
+    delete(d.color_quads)
+    color_quads := make([dynamic]_Color_Quad, 0, 0, context.allocator)
 
     // Half-leading: extra leading splits evenly above and below the text.
     ascent := text.ascent(st.font, st.font_weight)
@@ -257,10 +293,49 @@ _draw :: proc(self: ^Text_Node) {
             word := d.shaped.words[wi]
             if wi != l.start && word.space_before do pen += d.shaped.space_advance * size
             for g in word.glyphs {
+                gx := pen + g.offset.x * size
+                gy := baseline - g.offset.y * size
+                // Prefer v1; fall back to v0.
+                if bm, ok := text.color_bitmap_cached(g.face, g.gid, size * max(scale.y, 1));
+                   ok {
+                    append(&color_quads, _Color_Quad{
+                        rect = {
+                            gx + bm.plane[0] * size,
+                            gy - bm.plane[3] * size,
+                            (bm.plane[2] - bm.plane[0]) * size,
+                            (bm.plane[3] - bm.plane[1]) * size,
+                        },
+                        face = g.face,
+                        gid  = g.gid,
+                        size = size * max(scale.y, 1),
+                    })
+                    pen += g.advance * size
+                    continue
+                }
+                // Resolve layers before testing the empty base outline.
+                if layers := text.color_layers(g.face, g.gid); len(layers) > 0 {
+                    for layer in layers {
+                        lg := text.glyph(g.face, layer.gid, 0)
+                        if lg.curve_count == 0 do continue
+                        mg, ok := text.msdf_glyph(g.face, layer.gid, 0)
+                        if !ok do continue
+                        append(&msdf_quads, painter.MSDF_Quad{
+                            rect = {
+                                gx + mg.plane[0] * size,
+                                gy - mg.plane[3] * size,
+                                (mg.plane[2] - mg.plane[0]) * size,
+                                (mg.plane[3] - mg.plane[1]) * size,
+                            },
+                            uv       = mg.uv,
+                            tint     = {layer.color[0], layer.color[1], layer.color[2], layer.color[3]},
+                            has_tint = true,
+                        })
+                    }
+                    pen += g.advance * size
+                    continue
+                }
                 gl := text.glyph(g.face, g.gid, g.embold)
                 if gl.curve_count > 0 {
-                    gx := pen + g.offset.x * size
-                    gy := baseline - g.offset.y * size
                     if mg, ok := text.msdf_glyph(g.face, g.gid, g.embold); ok {
                         append(&msdf_quads, painter.MSDF_Quad{
                             rect = {
@@ -296,6 +371,7 @@ _draw :: proc(self: ^Text_Node) {
 
     d.quads = quads[:]
     d.msdf_quads = msdf_quads[:]
+    d.color_quads = color_quads[:]
     d.quad_rect = r
     d.quad_font = st.font
     d.quad_font_size = size

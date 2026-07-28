@@ -52,8 +52,9 @@ glyph :: proc(f: ^Face, gid: u32, embold: f32 = 0) -> Glyph {
     base := u32(len(_curves) / 3)
     contour_base := u32(len(_contour_ends))
     s := f.inv_upem
+    fix_scale, fix_offset := _composite_fix(f, gid, verts, nv)
     for v in verts[:nv] {
-        p := [2]f32{f32(v.x), f32(v.y)} * s
+        p := ([2]f32{f32(v.x), f32(v.y)} * fix_scale + fix_offset) * s
         switch stbtt.vmove(v.type) {
         case .vmove:
             _finish_contour(&o)
@@ -63,17 +64,19 @@ glyph :: proc(f: ^Face, gid: u32, embold: f32 = 0) -> Glyph {
         case .vline:
             if p != o.cur do _emit(&o, o.cur, (o.cur + p) * 0.5, p)
         case .vcurve:
-            q := [2]f32{f32(v.cx), f32(v.cy)} * s
+            q := ([2]f32{f32(v.cx), f32(v.cy)} * fix_scale + fix_offset) * s
             if p != o.cur || q != o.cur do _emit(&o, o.cur, q, p)
         case .vcubic:
-            c1 := [2]f32{f32(v.cx), f32(v.cy)} * s
-            c2 := [2]f32{f32(v.cx1), f32(v.cy1)} * s
+            c1 := ([2]f32{f32(v.cx), f32(v.cy)} * fix_scale + fix_offset) * s
+            c2 := ([2]f32{f32(v.cx1), f32(v.cy1)} * fix_scale + fix_offset) * s
             _cubic(&o, o.cur, c1, c2, p, 0)
         case .none:
         }
     }
     _finish_contour(&o)
     if verts != nil do stbtt.FreeShape(&f.info, verts)
+
+    _normalize_winding(base, contour_base, o.count)
 
     if embold > 0 && o.count > 0 {
         _embolden(&o, base, contour_base, embold)
@@ -90,6 +93,75 @@ glyph :: proc(f: ^Face, gid: u32, embold: f32 = 0) -> Glyph {
     if o.count > 0 do _version += 1
     f.glyphs[key] = g
     return g
+}
+
+// Correct stb_truetype's scale/offset error using the authoritative glyf bbox.
+@(private = "file")
+_composite_fix :: proc(f: ^Face, gid: u32, verts: [^]stbtt.vertex, nv: c.int) -> (scale, offset: [2]f32) {
+    scale = {1, 1}
+    if nv <= 0 do return
+    x0, y0, x1, y1: c.int
+    stbtt.GetGlyphBox(&f.info, c.int(gid), &x0, &y0, &x1, &y1)
+    if x1 <= x0 || y1 <= y0 do return
+
+    mn := [2]f32{math.F32_MAX, math.F32_MAX}
+    mx := [2]f32{-math.F32_MAX, -math.F32_MAX}
+    for v in verts[:nv] {
+        mn.x = min(mn.x, f32(v.x)); mx.x = max(mx.x, f32(v.x))
+        mn.y = min(mn.y, f32(v.y)); mx.y = max(mx.y, f32(v.y))
+    }
+    span := mx - mn
+    want := [2]f32{f32(x1 - x0), f32(y1 - y0)}
+    // Preserve hairlines and exact non-composite matches.
+    if span.x > 0 && abs(span.x - want.x) > 1 do scale.x = want.x / span.x
+    if span.y > 0 && abs(span.y - want.y) > 1 do scale.y = want.y / span.y
+    if scale == {1, 1} && mn == {f32(x0), f32(y0)} do return
+
+    offset = [2]f32{f32(x0), f32(y0)} - mn * scale
+    return
+}
+
+@(private = "file")
+_contour_area :: proc(start, end: u32) -> f32 {
+    a := f32(0)
+    for i in int(start) ..< int(end) {
+        p0 := _curves[i * 3]
+        p2 := _curves[i * 3 + 2]
+        a += p0.x * p2.y - p2.x * p0.y
+    }
+    return a * 0.5
+}
+
+// Normalize the largest contour so downstream fill uses TrueType winding.
+@(private = "file")
+_normalize_winding :: proc(base, contour_base, count: u32) {
+    if count == 0 do return
+
+    outer_area := f32(0)
+    start := base
+    for ci in contour_base ..< u32(len(_contour_ends)) {
+        end := base + _contour_ends[ci]
+        a := _contour_area(start, end)
+        if abs(a) > abs(outer_area) do outer_area = a
+        start = end
+    }
+    if outer_area <= 0 do return
+
+    // Reverse segments and endpoints, not control points.
+    start = base
+    for ci in contour_base ..< u32(len(_contour_ends)) {
+        end := base + _contour_ends[ci]
+        lo, hi := int(start), int(end)
+        for i, j := lo, hi - 1; i < j; i, j = i + 1, j - 1 {
+            for k in 0 ..< 3 {
+                _curves[i * 3 + k], _curves[j * 3 + k] = _curves[j * 3 + k], _curves[i * 3 + k]
+            }
+        }
+        for i in lo ..< hi {
+            _curves[i * 3], _curves[i * 3 + 2] = _curves[i * 3 + 2], _curves[i * 3]
+        }
+        start = end
+    }
 }
 
 @(private = "file")

@@ -2,12 +2,15 @@ package text
 
 import "core:c"
 import "core:math"
+import "core:slice"
 import MSDF "src:msdfgen"
 
 MSDF_ATLAS_SIZE :: 2048
 MSDF_EM_PIXELS  :: 64.0
 MSDF_RANGE_PX   :: 4.0
 MSDF_PADDING    :: 5
+// One texel prevents bilinear sampling across packed tiles.
+MSDF_GUTTER     :: 1
 
 MSDF_Glyph :: struct {
 	// Glyph plane bounds in em: left, bottom, right, top.
@@ -83,12 +86,14 @@ msdf_glyph :: proc(face: ^Face, gid: u32, embold: f32 = 0) -> (MSDF_Glyph, bool)
     if _msdf_pixels == nil {
         _msdf_pixels = make([]u8, MSDF_ATLAS_SIZE * MSDF_ATLAS_SIZE * 4)
     }
-    if _msdf_x + w > MSDF_ATLAS_SIZE {
-        _msdf_x = 0
-        _msdf_y += _msdf_row_h
-        _msdf_row_h = 0
+    // Commit packing only after all failure paths pass.
+    at_x, at_y, row_h := _msdf_x, _msdf_y, _msdf_row_h
+    if at_x + w > MSDF_ATLAS_SIZE {
+        at_x = 0
+        at_y += row_h
+        row_h = 0
     }
-    if _msdf_y + h > MSDF_ATLAS_SIZE do return {}, false
+    if at_y + h > MSDF_ATLAS_SIZE do return {}, false
 
     curves, _ := curve_data()
     point_start := int(outline.curve_base) * 3
@@ -108,10 +113,18 @@ msdf_glyph :: proc(face: ^Face, gid: u32, embold: f32 = 0) -> (MSDF_Glyph, bool)
     )
     if !ok do return {}, false
 
-    for row in 0 ..< h {
-        dst := ((_msdf_y + row) * MSDF_ATLAS_SIZE + _msdf_x) * 4
-        src := row * w * 4
-        copy(_msdf_pixels[dst:][:w * 4], tile[src:][:w * 4])
+    // Clear gutters when reusing atlas slots.
+    for row in 0 ..< h + MSDF_GUTTER {
+        y := at_y + row
+        if y >= MSDF_ATLAS_SIZE do break
+        span := min(w + MSDF_GUTTER, MSDF_ATLAS_SIZE - at_x)
+        dst := (y * MSDF_ATLAS_SIZE + at_x) * 4
+        if row < h {
+            copy(_msdf_pixels[dst:][:w * 4], tile[row * w * 4:][:w * 4])
+            slice.zero(_msdf_pixels[dst + w * 4:][:(span - w) * 4])
+        } else {
+            slice.zero(_msdf_pixels[dst:][:span * 4])
+        }
     }
 
     inv := 1.0 / f32(MSDF_ATLAS_SIZE)
@@ -119,15 +132,17 @@ msdf_glyph :: proc(face: ^Face, gid: u32, embold: f32 = 0) -> (MSDF_Glyph, bool)
     out := MSDF_Glyph {
         plane = {outline.min.x - pad_em, outline.min.y - pad_em, outline.max.x + pad_em, outline.max.y + pad_em},
         uv = {
-            f32(_msdf_x) * inv,
-            f32(_msdf_y) * inv,
-            f32(_msdf_x + w) * inv,
-            f32(_msdf_y + h) * inv,
+            f32(at_x) * inv,
+            f32(at_y) * inv,
+            f32(at_x + w) * inv,
+            f32(at_y + h) * inv,
         },
     }
     _msdf_glyphs[key] = out
-    _msdf_x += w
-    _msdf_row_h = max(_msdf_row_h, h)
+    // UV borders sample the gutter outside MSDF_PADDING.
+    _msdf_x = at_x + w + MSDF_GUTTER
+    _msdf_y = at_y
+    _msdf_row_h = max(row_h, h)
     _msdf_version += 1
     return out, true
 }

@@ -2,6 +2,7 @@ package text
 
 import "core:c"
 import "core:slice"
+import "core:strings"
 import stbtt "vendor:stb/truetype"
 import HB "src:harfbuzz"
 
@@ -43,15 +44,28 @@ Face :: struct {
     instances: map[FontWeight]^Face, // variable faces only; owned
     // Set on instances so they aren't re-instanced or re-registered.
     instance_of: ^Face,
+
+    family: string, // owned; weight matching only ever ranges within one family
 }
 
-// Ordered fallback chain. Faces are grouped by coverage.
+// Ordered fallback chain. Faces are grouped by family.
 Font_Set :: struct {
     faces: [dynamic]^Face,
+
+    // Cached platform fallback for an uncovered run.
+    on_missing: proc(set: ^Font_Set, r: rune, script: u32) -> ^Face,
+    resolved:   map[Fallback_Key]^Face,
+}
+
+Fallback_Key :: struct {
+    r:      rune,
+    script: u32,
 }
 
 set_create :: proc() -> ^Font_Set {
-    return new(Font_Set)
+    set := new(Font_Set)
+    set.on_missing = _platform_fallback
+    return set
 }
 
 when ODIN_OS == .JS {
@@ -64,9 +78,13 @@ when ODIN_OS == .JS {
     }
 }
 
-set_register :: proc(set: ^Font_Set, data: []u8, index := 0) -> ^Face {
+set_register :: proc(set: ^Font_Set, data: []u8, index := 0, family := "") -> ^Face {
     f := _face_create(data, index)
     if f == nil do return nil
+    if family != "" {
+        delete(f.family)
+        f.family = strings.clone(family)
+    }
     append(&set.faces, f)
     return f
 }
@@ -92,6 +110,7 @@ _face_create :: proc(data: []u8, index: int) -> ^Face {
     _face_init_metrics(f)
 
     f.weight = _os2_weight(f)
+    f.family = _name_family(f)
     axis: HB.OT_Var_Axis_Info
     if HB.ot_var_has_data(f.hb_face) != 0 && HB.ot_var_find_axis_info(f.hb_face, WGHT, &axis) != 0 {
         f.variable = true
@@ -100,6 +119,60 @@ _face_create :: proc(data: []u8, index: int) -> ^Face {
         f.weight = FontWeight(clamp(axis.default_value, 1, 1000))
     }
     return f
+}
+
+NAME :: HB.Tag(0x6E616D65) // 'name'
+
+NAME_ID_FAMILY            :: 1
+NAME_ID_TYPOGRAPHIC_FAMILY :: 16
+
+// Prefer typographic family names so weights remain grouped.
+@(private = "file")
+_name_family :: proc(f: ^Face) -> string {
+    blob := HB.face_reference_table(f.hb_face, NAME)
+    defer HB.blob_destroy(blob)
+    n: c.uint
+    data := HB.blob_get_data(blob, &n)
+    if data == nil || n < 6 do return ""
+
+    be16 :: proc(d: [^]u8, off: u32, n: c.uint) -> (u16, bool) {
+        if u32(n) < off + 2 do return 0, false
+        return u16(d[off]) << 8 | u16(d[off + 1]), true
+    }
+
+    count, ok1 := be16(data, 2, n)
+    str_off, ok2 := be16(data, 4, n)
+    if !ok1 || !ok2 do return ""
+
+    best_off, best_len: u32
+    best_id := max(u16)
+    for i in 0 ..< u32(count) {
+        rec := 6 + i * 12
+        plat, k1 := be16(data, rec, n)
+        enc, k2 := be16(data, rec + 2, n)
+        name_id, k3 := be16(data, rec + 6, n)
+        slen, k4 := be16(data, rec + 8, n)
+        soff, k5 := be16(data, rec + 10, n)
+        if !k1 || !k2 || !k3 || !k4 || !k5 do break
+        if name_id != NAME_ID_FAMILY && name_id != NAME_ID_TYPOGRAPHIC_FAMILY do continue
+        // Windows/Unicode BMP encodings are UTF-16BE; skip Mac Roman entries.
+        if !(plat == 3 && (enc == 1 || enc == 0)) && plat != 0 do continue
+        if name_id < best_id || (name_id == best_id && best_len == 0) {
+            best_id = name_id
+            best_off = u32(str_off) + u32(soff)
+            best_len = u32(slen)
+        }
+        if name_id == NAME_ID_TYPOGRAPHIC_FAMILY do break
+    }
+    if best_len == 0 || best_off + best_len > u32(n) do return ""
+
+    b := strings.builder_make()
+    for i := u32(0); i + 1 < best_len; i += 2 {
+        cp := rune(u16(data[best_off + i]) << 8 | u16(data[best_off + i + 1]))
+        if cp == 0 do continue
+        strings.write_rune(&b, cp)
+    }
+    return strings.to_string(b)
 }
 
 @(private)
@@ -234,13 +307,8 @@ _resolve_weight :: proc(set: ^Font_Set, base: ^Face, want: FontWeight) -> (face:
 _same_coverage :: proc(a, b: ^Face) -> bool {
     if a == b do return true
     if a.instance_of != nil || b.instance_of != nil do return false
-    PROBES :: [?]rune{'A', 'a', '0', 'ก', '中', 'あ', 'А', 'ا'}
-    for r in PROBES {
-        if (stbtt.FindGlyphIndex(&a.info, r) != 0) != (stbtt.FindGlyphIndex(&b.info, r) != 0) {
-            return false
-        }
-    }
-    return true
+    if a.family == "" || b.family == "" do return false
+    return a.family == b.family
 }
 
 set_destroy :: proc(set: ^Font_Set) {
@@ -254,6 +322,9 @@ set_destroy :: proc(set: ^Font_Set) {
         }
         delete(f.instances)
         delete(f.glyphs)
+        delete(f.family)
+        _color_tables_destroy(f)
+        _color_bitmaps_destroy(f)
         HB.font_destroy(f.hb)
         HB.face_destroy(f.hb_face)
         HB.blob_destroy(f.blob)
@@ -261,14 +332,35 @@ set_destroy :: proc(set: ^Font_Set) {
         free(f)
     }
     delete(set.faces)
+    delete(set.resolved)
     free(set)
+}
+
+// Seed an empty set from the platform's default UI face.
+@(private = "package")
+_ensure_primary :: proc(set: ^Font_Set) -> ^Face {
+    if set == nil do return nil
+    if len(set.faces) > 0 do return set.faces[0]
+    return _fallback_lookup(set, 'A', 0)
+}
+
+// Cache platform faces in the fallback chain.
+@(private = "package")
+_fallback_lookup :: proc(set: ^Font_Set, r: rune, script: u32) -> ^Face {
+    key := Fallback_Key{r, script}
+    if f, ok := set.resolved[key]; ok do return f
+    f: ^Face
+    if set.on_missing != nil do f = set.on_missing(set, r, script)
+    set.resolved[key] = f
+    return f
 }
 
 // Vertical metrics come from the weight actually used, since a bold or a
 // variable instance can differ from the regular face.
 @(private = "file")
 _primary :: proc(set: ^Font_Set, w: FontWeight) -> ^Face {
-    if set == nil || len(set.faces) == 0 do return nil
+    if set == nil do return nil
+    if _ensure_primary(set) == nil do return nil
     face, _ := _resolve_weight(set, set.faces[0], w)
     return face
 }

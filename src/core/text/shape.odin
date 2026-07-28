@@ -40,7 +40,9 @@ SCRIPT_UNKNOWN :: HB.Script(0x5A7A7A7A) // 'Zzzz'
 
 shape :: proc(set: ^Font_Set, s: string, weight := WEIGHT_NORMAL, allocator := context.allocator) -> Shaped_Text {
     st: Shaped_Text
-    if set == nil || len(set.faces) == 0 do return st
+    if set == nil do return st
+    // Borrow the platform UI face when no primary font is loaded.
+    if len(set.faces) == 0 && _ensure_primary(set) == nil do return st
     primary, _ := _resolve_weight(set, set.faces[0], weight)
     st.space_advance = primary.space_advance
 
@@ -70,13 +72,39 @@ _is_space :: proc(r: rune) -> bool {
     return r == ' ' || r == '\t' || r == '\r'
 }
 
-// Coverage picks the family, then weight picks the face within it.
+// Resolve coverage per run for language-aware fallback, then select weight.
 @(private = "file")
-_face_for :: proc(set: ^Font_Set, r: rune, weight: FontWeight) -> (^Face, f32) {
+_face_for_run :: proc(set: ^Font_Set, runes: []rune, script: HB.Script, weight: FontWeight) -> (^Face, f32) {
     for f in set.faces {
-        if stbtt.FindGlyphIndex(&f.info, r) != 0 do return _resolve_weight(set, f, weight)
+        if _covers(f, runes) do return _resolve_weight(set, f, weight)
+    }
+    for r in runes {
+        if _is_ignorable(r) do continue
+        if f := _fallback_lookup(set, r, u32(script)); f != nil {
+            return _resolve_weight(set, f, weight)
+        }
+        break
     }
     return _resolve_weight(set, set.faces[0], weight)
+}
+
+@(private = "file")
+_covers :: proc(f: ^Face, runes: []rune) -> bool {
+    for r in runes {
+        if _is_ignorable(r) do continue
+        if stbtt.FindGlyphIndex(&f.info, r) == 0 do return false
+    }
+    return true
+}
+
+// Ignore runes the shaper drops or synthesizes.
+@(private = "file")
+_is_ignorable :: proc(r: rune) -> bool {
+    switch r {
+    case 0x00AD, 0x200B ..= 0x200F, 0x2028 ..= 0x202E, 0x2060 ..= 0x2064, 0xFEFF:
+        return true
+    }
+    return false
 }
 
 // 0 acts as a wildcard that merges with any concrete script.
@@ -166,24 +194,44 @@ _Run :: struct {
 
 @(private = "file")
 _shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, levels: []FB.Level, start, end: int, word: ^Word, weight: FontWeight, allocator: runtime.Allocator) {
-    // Itemize into runs of uniform (level, script, face).
+    // Itemize by (level, script) first so face resolution sees a whole run.
     runs := make([dynamic]_Run, context.temp_allocator)
     for k in start ..< end {
-        r := runes[k]
         lv := levels[k]
-        fc, eb := _face_for(set, r, weight)
-        sc := _script_for(r)
+        sc := _script_for(runes[k])
         if len(runs) > 0 {
             last := &runs[len(runs) - 1]
-            if last.level == lv && last.face == fc &&
+            if last.level == lv &&
 			   (sc == HB.Script(0) || last.script == HB.Script(0) || sc == last.script) {
                 if last.script == HB.Script(0) do last.script = sc
                 last.end = k + 1
                 continue
             }
         }
-        append(&runs, _Run{k, k + 1, lv, sc, fc, eb})
+        append(&runs, _Run{k, k + 1, lv, sc, nil, 0})
     }
+
+    // Split uncovered runes from the surrounding run.
+    split := make([dynamic]_Run, context.temp_allocator)
+    for run in runs {
+        k := run.start
+        for k < run.end {
+            fc, eb := _face_for_run(set, runes[k:run.end], run.script, weight)
+            j := k + 1
+            for j < run.end && _covers(fc, runes[j:j + 1]) do j += 1
+            if len(split) > 0 {
+                last := &split[len(split) - 1]
+                if last.level == run.level && last.script == run.script && last.face == fc {
+                    last.end = j
+                    k = j
+                    continue
+                }
+            }
+            append(&split, _Run{k, j, run.level, run.script, fc, eb})
+            k = j
+        }
+    }
+    runs = split
 
     run_levels := make([]FB.Level, len(runs), context.temp_allocator)
     for run, ri in runs do run_levels[ri] = run.level
@@ -201,7 +249,12 @@ _shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, lev
         HB.buffer_clear_contents(_buf)
         HB.buffer_add_utf8(_buf, raw_data(seg), c.int(len(seg)), 0, c.int(len(seg)))
         HB.buffer_set_direction(_buf, .RTL if FB.level_is_rtl(run.level) else .LTR)
-        if run.script != HB.Script(0) do HB.buffer_set_script(_buf, run.script)
+        if run.script != HB.Script(0) {
+            HB.buffer_set_script(_buf, run.script)
+            if tag := script_language(u32(run.script)); tag != "" {
+                HB.buffer_set_language(_buf, HB.language_from_string(raw_data(tag), c.int(len(tag))))
+            }
+        }
         HB.buffer_guess_segment_properties(_buf)
         HB.shape(run.face.hb, _buf, nil, 0)
 
