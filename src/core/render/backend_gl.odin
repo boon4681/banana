@@ -1,6 +1,7 @@
 #+build !js
 package render
 
+import "core:math/linalg"
 import "base:runtime"
 import "core:fmt"
 import gl "vendor:OpenGL"
@@ -11,11 +12,11 @@ import "src:core/common"
 // (one GL stencil bit per nesting depth).
 @(private="file")
 GL_State :: struct {
-    render:         Render_Interface,
-    program:        u32,
-    vao, vbo, ibo:  u32,
-    loc_resolution: i32,
-    loc_has_tex:    i32,
+    render: Render_Interface,
+
+    using gl_program: GL_Program,
+    vao, vbo, ibo: u32,
+
     swapchain_w:    int,
     swapchain_h:    int,
     stencil_depth:  int,
@@ -23,15 +24,39 @@ GL_State :: struct {
     render_targets: [dynamic]GL_RT,
     meshes:         [dynamic]GL_Glyph_Mesh,
 
-    glyph_program:                   u32,
+    using gl_glyph: GL_GLYPH_Program,
     glyph_vao, glyph_vbo, glyph_ibo: u32,
     glyph_meshes:                    [dynamic]GL_Glyph_Mesh,
     curve_buf, curve_tex:            u32,
     curves_version:                  u64,
-    locyph_resolution:               i32,
-    msdf_program:                    u32,
-    msdf_loc_resolution:             i32,
-    msdf_loc_range:                  i32,
+
+    using gl_msdf: GL_MSDF_Program,
+}
+
+@(private="file")
+GL_Program :: struct #all_or_none {
+    program:        u32,
+    loc_tex:        i32,
+    loc_has_tex:    i32,
+    loc_resolution: i32,
+    loc_transform:  i32,
+}
+
+@(private="file")
+GL_MSDF_Program :: struct #all_or_none {
+    msdf_program:         u32,
+    msdf_loc_resolution:  i32,
+    msdf_loc_range:       i32,
+    msdf_loc_u_transform: i32,
+    msdf_loc_atlas:       i32,
+}
+
+@(private="file")
+GL_GLYPH_Program :: struct #all_or_none {
+    glyph_program:        u32,
+    glyph_loc_v_curves:   i32,
+    glyph_loc_resolution: i32,
+    glyph_loc_transform:  i32,
 }
 
 @(private="file")
@@ -122,10 +147,14 @@ _init :: proc(
         compile_msg, _, link_msg, _ := gl.get_last_error_messages()
         panic(fmt.tprintf("render backend 'gl': shader compile failed\n%s\n%s", compile_msg, link_msg))
     }
-    _state.program = program
     gl.UseProgram(program)
-    _state.loc_resolution = gl.GetUniformLocation(program, "u_resolution")
-    _state.loc_has_tex = gl.GetUniformLocation(program, "u_has_tex")
+    _state.gl_program = {
+        program        = program,
+        loc_resolution = gl.GetUniformLocation(program, "u_resolution"),
+        loc_transform  = gl.GetUniformLocation(program, "u_transform"),
+        loc_has_tex    = gl.GetUniformLocation(program, "u_has_tex"),
+        loc_tex        = gl.GetUniformLocation(program, "u_tex")
+    }
 
     vaos: [1]u32
     gl.GenVertexArrays(1, &vaos[0])
@@ -152,17 +181,25 @@ _init :: proc(
         compile_msg, _, link_msg, _ := gl.get_last_error_messages()
         panic(fmt.tprintf("render backend 'gl': glyph shader compile failed\n%s\n%s", compile_msg, link_msg))
     }
-    _state.glyph_program = glyph_program
-    _state.locyph_resolution = gl.GetUniformLocation(glyph_program, "u_resolution")
+    _state.gl_glyph = {
+        glyph_program        = glyph_program,
+        glyph_loc_resolution = gl.GetUniformLocation(glyph_program, "u_resolution"),
+        glyph_loc_transform  = gl.GetUniformLocation(glyph_program, "u_transform"),
+        glyph_loc_v_curves   = gl.GetUniformLocation(glyph_program,"v_curves")
+    }
 
     msdf_program, msdf_ok := gl.load_shaders_source(MSDF_VS_SOURCE, MSDF_FS_SOURCE)
     if !msdf_ok {
         compile_msg, _, link_msg, _ := gl.get_last_error_messages()
         panic(fmt.tprintf("render backend 'gl': MSDF shader compile failed\n%s\n%s", compile_msg, link_msg))
     }
-    _state.msdf_program = msdf_program
-    _state.msdf_loc_resolution = gl.GetUniformLocation(msdf_program, "u_resolution")
-    _state.msdf_loc_range = gl.GetUniformLocation(msdf_program, "u_px_range")
+    _state.gl_msdf = {
+        msdf_program         = msdf_program,
+        msdf_loc_resolution  = gl.GetUniformLocation(msdf_program, "u_resolution"),
+        msdf_loc_range       = gl.GetUniformLocation(msdf_program, "u_px_range"),
+        msdf_loc_u_transform = gl.GetUniformLocation(msdf_program,"u_transform"),
+        msdf_loc_atlas       = gl.GetUniformLocation(msdf_program, "u_atlas")
+    }
 
     glyph_vaos: [1]u32
     gl.GenVertexArrays(1, &glyph_vaos[0])
@@ -297,7 +334,7 @@ _draw :: proc(
     gl.UseProgram(_state.program)
     gl.Uniform2f(_state.loc_resolution, f32(target_w), f32(target_h))
     identity := common.Mat3X3_IDENTITY
-    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.program, "u_transform"), 1, false, &identity[0,0])
+    gl.UniformMatrix3fv(_state.loc_transform, 1, false, &identity[0,0])
 
     has_tex: bool
     if texture != INVALID_TEXTURE && int(texture) - 1 < len(_state.textures) {
@@ -305,7 +342,7 @@ _draw :: proc(
         if tex.id != 0 {
             gl.ActiveTexture(gl.TEXTURE0)
             gl.BindTexture(gl.TEXTURE_2D, tex.id)
-            gl.Uniform1i(gl.GetUniformLocation(_state.program, "u_tex"), 0)
+            gl.Uniform1i(_state.loc_tex, 0)
             has_tex = true
         }
     }
@@ -398,7 +435,7 @@ _draw_mesh :: proc(
     gl.UseProgram(_state.program)
     gl.Uniform2f(_state.loc_resolution, f32(target_w), f32(target_h))
     matrix_values := transmute([9]f32)transform
-    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.program, "u_transform"), 1, false, &matrix_values[0])
+    gl.UniformMatrix3fv(_state.loc_transform, 1, false, &matrix_values[0])
 
     has_tex := false
     if texture != INVALID_TEXTURE && int(texture) - 1 < len(_state.textures) {
@@ -406,7 +443,7 @@ _draw_mesh :: proc(
         if tex.id != 0 {
             gl.ActiveTexture(gl.TEXTURE0)
             gl.BindTexture(gl.TEXTURE_2D, tex.id)
-            gl.Uniform1i(gl.GetUniformLocation(_state.program, "u_tex"), 0)
+            gl.Uniform1i(_state.loc_tex, 0)
             has_tex = true
         }
     }
@@ -452,12 +489,12 @@ _draw_glyphs :: proc(
     }
 
     gl.UseProgram(_state.glyph_program)
-    gl.Uniform2f(_state.locyph_resolution, f32(target_w), f32(target_h))
+    gl.Uniform2f(_state.glyph_loc_resolution, f32(target_w), f32(target_h))
     matrix_values := transmute([9]f32)transform
-    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.glyph_program, "u_transform"), 1, false, &matrix_values[0])
+    gl.UniformMatrix3fv(_state.glyph_loc_transform, 1, false, &matrix_values[0])
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
-    gl.Uniform1i(gl.GetUniformLocation(_state.glyph_program, "u_curves"), 0)
+    gl.Uniform1i(_state.glyph_loc_v_curves, 0)
 
     gl.BindVertexArray(_state.glyph_vao)
     gl.BindBuffer(gl.ARRAY_BUFFER, _state.glyph_vbo)
@@ -541,12 +578,12 @@ _draw_glyph_mesh :: proc(
     }
 
     gl.UseProgram(_state.glyph_program)
-    gl.Uniform2f(_state.locyph_resolution, f32(target_w), f32(target_h))
+    gl.Uniform2f(_state.glyph_loc_resolution, f32(target_w), f32(target_h))
     matrix_values := transmute([9]f32)transform
-    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.glyph_program, "u_transform"), 1, false, &matrix_values[0])
+    gl.UniformMatrix3fv(_state.glyph_loc_transform, 1, false, &matrix_values[0])
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
-    gl.Uniform1i(gl.GetUniformLocation(_state.glyph_program, "u_curves"), 0)
+    gl.Uniform1i(_state.glyph_loc_v_curves, 0)
     gl.BindVertexArray(gm.vao)
     gl.DrawElements(gl.TRIANGLES, i32(gm.index_count), gl.UNSIGNED_INT, nil)
     gl.BindVertexArray(_state.vao)
@@ -615,12 +652,12 @@ _draw_msdf_mesh :: proc(
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     gl.UseProgram(_state.msdf_program)
     gl.Uniform2f(_state.msdf_loc_resolution, f32(target_w), f32(target_h))
-    matrix_values := transmute([9]f32)transform
-    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.msdf_program, "u_transform"), 1, false, &matrix_values[0])
+    matrix_values := linalg.matrix_flatten(transform)
+    gl.UniformMatrix3fv(_state.msdf_loc_u_transform, 1, false, &matrix_values[0])
     gl.Uniform1f(_state.msdf_loc_range, pixel_range)
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindTexture(gl.TEXTURE_2D, _state.textures[ti].id)
-    gl.Uniform1i(gl.GetUniformLocation(_state.msdf_program, "u_atlas"), 0)
+    gl.Uniform1i(_state.msdf_loc_atlas, 0)
     gl.BindVertexArray(gm.vao)
     gl.DrawElements(gl.TRIANGLES, i32(gm.index_count), gl.UNSIGNED_INT, nil)
     gl.BindVertexArray(_state.vao)
@@ -812,7 +849,7 @@ _stencil_push_clip :: proc() {
     gl.UseProgram(_state.program)
     gl.Uniform2f(_state.loc_resolution, f32(_state.swapchain_w), f32(_state.swapchain_h))
     identity := common.Mat3X3_IDENTITY
-    gl.UniformMatrix3fv(gl.GetUniformLocation(_state.program, "u_transform"), 1, false, &identity[0,0])
+    gl.UniformMatrix3fv(_state.loc_transform, 1, false, &identity[0,0])
     gl.Uniform1i(_state.loc_has_tex, 0)
     gl.BindVertexArray(_state.vao)
     gl.BindBuffer(gl.ARRAY_BUFFER, _state.vbo)
