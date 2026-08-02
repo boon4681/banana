@@ -6,6 +6,10 @@
     path = libc/harfbuzz
     url = https://github.com/harfbuzz/harfbuzz
 
+[submodule "libc/sheenbidi"]
+	path = libc/sheenbidi
+	url = https://github.com/Tehreer/SheenBidi.git
+
 [submodule "msdfgen"]
     path = libc/msdfgen
     url = https://github.com/Chlumsky/msdfgen.git
@@ -21,6 +25,12 @@
 [submodule "libc/tracy"]
 	path = libc/tracy
 	url = https://github.com/wolfpld/tracy.git
-[submodule "libc/sheenbidi"]
-	path = libc/sheenbidi
-	url = https://github.com/Tehreer/SheenBidi.git
+[submodule "libc/libunibreak"]
+	path = libc/libunibreak
+	url = https://github.com/adah1972/libunibreak.git
+[submodule "libc/budouxc"]
+	path = libc/budouxc
+	url = https://github.com/memononen/budouxc.git
+[submodule ".tools/back"]
+	path = .tools/back
+	url = https://github.com/laytan/back.git
