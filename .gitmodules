@@ -6,10 +6,6 @@
     path = libc/harfbuzz
     url = https://github.com/harfbuzz/harfbuzz
 
-[submodule "fribidi"]
-    path = libc/fribidi
-    url = https://github.com/fribidi/fribidi
-
 [submodule "msdfgen"]
     path = libc/msdfgen
     url = https://github.com/Chlumsky/msdfgen.git
@@ -25,3 +21,6 @@
 [submodule "libc/tracy"]
 	path = libc/tracy
 	url = https://github.com/wolfpld/tracy.git
+[submodule "libc/sheenbidi"]
+	path = libc/sheenbidi
+	url = https://github.com/Tehreer/SheenBidi.git
