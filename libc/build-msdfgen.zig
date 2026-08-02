@@ -2,7 +2,7 @@ const std = @import("std");
 
 const cpp_flags = [_][]const u8{
     "-std=c++17", "-fno-omit-frame-pointer", "-fno-exceptions", "-fno-rtti",
-    "-fno-threadsafe-statics", "-fvisibility=hidden", "-O2",
+    "-fno-threadsafe-statics", "-fvisibility=hidden", "-O3",
     "-DMSDFGEN_USE_CPP11", "-DMSDFGEN_PUBLIC=",
 };
 

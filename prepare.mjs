@@ -7,8 +7,8 @@ const root = dirname(fileURLToPath(import.meta.url));
 
 const libs = [
     { build: "build-yoga.zig", dir: "yoga", name: "yogacore", cpp: true },
-    { build: "build-harfbuzz.zig", dir: "harfbuzz", name: "harfbuzz", cpp: true },
-    { build: "build-fribidi.zig", dir: "fribidi", name: "fribidi", cpp: false },
+    { build: "build-harfbuzz.zig", dir: "harfbuzz", name: "harfbuzz", cpp: true, out: "./libc/.build/harfbuzz" },
+    { build: "build-fribidi.zig", dir: "fribidi", name: "fribidi", cpp: false, out: "./libc/.build/fribidi" },
     { build: "build-msdfgen.zig", dir: "msdfgen", name: "msdfgen", cpp: true },
     { build: "build-lunasvg.zig", dir: "lunasvg", name: "lunasvg", cpp: true },
 ]
@@ -25,11 +25,13 @@ for (const lib of libs) {
     mkdirSync(`./src/${lib.dir}/libc/macos`, { recursive: true })
     mkdirSync(`./src/${lib.dir}/libc/wasm`, { recursive: true })
 
-    copyFileSync(`./libc/${lib.dir}/build/windows/${lib.name}.lib`, `./src/${lib.dir}/libc/windows/${lib.name}.lib`)
-    copyFileSync(`./libc/${lib.dir}/build/linux/lib${lib.name}.a`, `./src/${lib.dir}/libc/linux/lib${lib.name}.a`)
-    copyFileSync(`./libc/${lib.dir}/build/macos/lib${lib.name}.a`, `./src/${lib.dir}/libc/macos/lib${lib.name}.a`)
+    let prefix = lib.out ? lib.out : `./libc/${lib.dir}/build`
+    copyFileSync(`${prefix}/windows/${lib.name}.lib`, `./src/${lib.dir}/libc/windows/${lib.name}.lib`)
+    copyFileSync(`${prefix}/linux/lib${lib.name}.a`, `./src/${lib.dir}/libc/linux/lib${lib.name}.a`)
+    copyFileSync(`${prefix}/macos/lib${lib.name}.a`, `./src/${lib.dir}/libc/macos/lib${lib.name}.a`)
 
-    execSync(`wasm-ld -r --whole-archive ./libc/${lib.dir}/build/wasm/lib${lib.name}.a -o ./src/${lib.dir}/libc/wasm/${lib.name}.o`, {
+
+    execSync(`wasm-ld -r --whole-archive ${prefix}/wasm/lib${lib.name}.a -o ./src/${lib.dir}/libc/wasm/${lib.name}.o`, {
         cwd: root,
         stdio: "inherit",
     })

@@ -7,3 +7,7 @@ node_modules/
 *.pdb
 *.back
 /web
+# Banana toolchain generated-output root (emitted *.gen.odin + host-type cache).
+**/.banana/
+**/dist/
+**/.build/

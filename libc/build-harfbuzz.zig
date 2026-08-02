@@ -7,7 +7,7 @@ const cpp_flags = [_][]const u8{
     "-fno-rtti",
     "-fno-threadsafe-statics",
     "-fvisibility=hidden",
-    "-O2",
+    "-O3",
     "-DHB_NO_MT",
 };
 
@@ -57,7 +57,7 @@ pub fn build(b: *std.Build) void {
         lib.bundle_compiler_rt = true;
 
         const install = b.addInstallArtifact(lib, .{
-            .dest_dir = .{ .override = .{ .custom = b.fmt("../harfbuzz/build/{s}", .{t.out}) } },
+            .dest_dir = .{ .override = .{ .custom = b.fmt("../.build/harfbuzz/{s}", .{t.out}) } },
         });
         b.getInstallStep().dependOn(&install.step);
     }

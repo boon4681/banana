@@ -2,7 +2,7 @@ const std = @import("std");
 
 const c_flags = [_][]const u8{
     "-std=c99",
-    "-O2",
+    "-O3",
     "-fvisibility=hidden",
     "-DHAVE_STRINGIZE",
     "-DHAVE_STDLIB_H",
@@ -140,7 +140,7 @@ pub fn build(b: *std.Build) void {
         lib.bundle_compiler_rt = true;
 
         const install = b.addInstallArtifact(lib, .{
-            .dest_dir = .{ .override = .{ .custom = b.fmt("../fribidi/build/{s}", .{t.out}) } },
+            .dest_dir = .{ .override = .{ .custom = b.fmt("../.build/fribidi/{s}", .{t.out}) } },
         });
         b.getInstallStep().dependOn(&install.step);
     }
