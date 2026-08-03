@@ -1,5 +1,5 @@
 *.zig-cache*
-src/*/libc
+src/**/libc
 build/
 fmt/
 node_modules/
