@@ -12,15 +12,13 @@ enum {
     BANANA_BUDOUX_TH,
 };
 
-void banana_budoux_breaks_utf32(const uint32_t *text, size_t length,
-                                int model, uint8_t *breaks) {
+void banana_budoux_breaks_utf32(const uint32_t *text, size_t length, int model, uint8_t *breaks) {
     boundary_iterator_t iterator;
     int32_t start;
     int32_t end;
 
     memset(breaks, 0, length + 1);
-    if (!text || length == 0 || length > INT32_MAX)
-        return;
+    if (!text || length == 0 || length > INT32_MAX) return;
 
     switch (model) {
     case BANANA_BUDOUX_JA:
@@ -40,7 +38,6 @@ void banana_budoux_breaks_utf32(const uint32_t *text, size_t length,
     }
 
     while (boundary_iterator_next(&iterator, &start, &end)) {
-        if (end > 0 && (size_t)end <= length)
-            breaks[end] = 1;
+        if (end > 0 && (size_t)end <= length) breaks[end] = 1;
     }
 }
