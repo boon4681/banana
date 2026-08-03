@@ -8,7 +8,8 @@ const root = dirname(fileURLToPath(import.meta.url));
 const libs = [
     { build: "build-yoga.zig", dir: "yoga", name: "yogacore", cpp: true },
     { build: "build-harfbuzz.zig", dir: "harfbuzz", name: "harfbuzz", cpp: true, out: "./libc/.build/harfbuzz" },
-    { build: "build-fribidi.zig", dir: "fribidi", name: "fribidi", cpp: false, out: "./libc/.build/fribidi" },
+    { build: "build-sheenbidi.zig", dir: "sheenbidi", name: "sheenbidi", cpp: false, out: "./libc/.build/sheenbidi" },
+    { build: "build-textbreak.zig", dir: "textbreak", name: "textbreak", cpp: false, out: "./libc/.build/textbreak" },
     { build: "build-msdfgen.zig", dir: "msdfgen", name: "msdfgen", cpp: true },
     { build: "build-lunasvg.zig", dir: "lunasvg", name: "lunasvg", cpp: true },
 ]
