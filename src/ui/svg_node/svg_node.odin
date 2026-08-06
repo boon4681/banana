@@ -104,7 +104,11 @@ _measure :: proc(n:^SVG_Node, w:f32, wm:node.MeasureMode, h:f32, hm:node.Measure
 _draw :: proc(n:^SVG_Node) {
     st := n->style()
     d:=_data(n)
-    svg.draw_cached(&d.doc, painter.get(), &d.cache, n.rect, st.fit == .Meet, st.tint)
+    current_color: Maybe(common.Color)
+    if c := node.Resolve_Text_Style(auto_cast(n)).color; c != {} {
+        current_color = c
+    }
+    svg.draw_cached(&d.doc, painter.get(), &d.cache, n.rect, st.fit == .Meet, st.tint, current_color)
 }
 
 @(private="file")
