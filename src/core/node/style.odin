@@ -20,6 +20,21 @@ Position      :: YG.PositionType
 Wrap          :: YG.Wrap
 Display       :: YG.Display
 BoxSizing     :: YG.BoxSizing
+User_Select :: enum {
+    Auto,
+    Text,
+    None,
+    All,
+}
+// CSS `pointer-events`. `None` makes a node transparent to hit testing without
+// affecting its children, which is what lets a full-screen overlay root pass
+// clicks through everywhere except over its painted content. `Inherit` takes
+// the parent's resolved mode, so a subtree can opt back into it explicitly.
+Pointer_Events :: enum {
+    Auto,
+    None,
+    Inherit,
+}
 // CSS `overflow`, which unlike Yoga's enum has a distinct `auto`. Kept per-axis;
 // see _set_overflow for how the pair collapses to Yoga's single node-wide value.
 Overflow :: enum {
@@ -41,9 +56,11 @@ Text_Style :: struct {
 }
 
 Style :: struct {
-    owner: ^Node,
-    v:     map[string]any, // holder for any value (for extending)
-    text:  Text_Style,
+    owner:       ^Node,
+    v:           map[string]any, // holder for any value (for extending)
+    text:        Text_Style,
+    select_mode: User_Select,
+    pointer_events: Pointer_Events,
     // Not Yoga-backed: Yoga stores one node-wide overflow, CSS one per axis.
     overflow_x: Overflow,
     overflow_y: Overflow,
@@ -72,6 +89,7 @@ _set_edge :: proc(n: YG.NodeRef, e: Edge, v: f32, u: unit, pt: YG.Style_Set_Edge
 // directly; `Style.v` is reserved for non-yoga style values only.
 @(private="file")
 style_vtable := Style_VTable{
+    get_z_index         = proc(self: ^Style) -> i32 { return self.owner.z_index },
     get_direction       = proc(self: ^Style) -> Direction { return YG.NodeStyleGetDirection(self.owner.raw) },
     get_flex_direction  = proc(self: ^Style) -> FlexDirection { return YG.NodeStyleGetFlexDirection(self.owner.raw) },
     get_justify_content = proc(self: ^Style) -> Justify { return YG.NodeStyleGetJustifyContent(self.owner.raw) },
@@ -81,6 +99,8 @@ style_vtable := Style_VTable{
     get_position_type   = proc(self: ^Style) -> Position { return YG.NodeStyleGetPositionType(self.owner.raw) },
     get_wrap            = proc(self: ^Style) -> Wrap { return YG.NodeStyleGetFlexWrap(self.owner.raw) },
     get_display         = proc(self: ^Style) -> Display { return YG.NodeStyleGetDisplay(self.owner.raw) },
+    get_select_mode     = proc(self: ^Style) -> User_Select { return Resolve_User_Select(self.owner) },
+    get_pointer_events  = proc(self: ^Style) -> Pointer_Events { return Resolve_Pointer_Events(self.owner) },
     // `overflow` reads back the x axis, mirroring how CSS shorthands resolve.
     get_overflow     = proc(self: ^Style) -> Overflow { return _stored(self).overflow_x },
     get_overflow_x   = proc(self: ^Style) -> Overflow { return _stored(self).overflow_x },
@@ -105,8 +125,8 @@ style_vtable := Style_VTable{
     get_margin_bottom     = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .Bottom); return r.value, r.unit },
     get_margin_start      = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .Start); return r.value, r.unit },
     get_margin_end        = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .End); return r.value, r.unit },
-    get_margin_horizontal = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .Horizontal); return r.value, r.unit },
-    get_margin_vertical   = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .Vertical); return r.value, r.unit },
+    get_margin_x = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .Horizontal); return r.value, r.unit },
+    get_margin_y   = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .Vertical); return r.value, r.unit },
     get_margin_all        = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetMargin(self.owner.raw, .All); return r.value, r.unit },
 
     get_padding_left       = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .Left); return r.value, r.unit },
@@ -115,8 +135,8 @@ style_vtable := Style_VTable{
     get_padding_bottom     = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .Bottom); return r.value, r.unit },
     get_padding_start      = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .Start); return r.value, r.unit },
     get_padding_end        = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .End); return r.value, r.unit },
-    get_padding_horizontal = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .Horizontal); return r.value, r.unit },
-    get_padding_vertical   = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .Vertical); return r.value, r.unit },
+    get_padding_x = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .Horizontal); return r.value, r.unit },
+    get_padding_y   = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .Vertical); return r.value, r.unit },
     get_padding_all        = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPadding(self.owner.raw, .All); return r.value, r.unit },
 
     get_position_left       = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .Left); return r.value, r.unit },
@@ -125,8 +145,8 @@ style_vtable := Style_VTable{
     get_position_bottom     = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .Bottom); return r.value, r.unit },
     get_position_start      = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .Start); return r.value, r.unit },
     get_position_end        = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .End); return r.value, r.unit },
-    get_position_horizontal = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .Horizontal); return r.value, r.unit },
-    get_position_vertical   = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .Vertical); return r.value, r.unit },
+    get_position_x = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .Horizontal); return r.value, r.unit },
+    get_position_y   = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .Vertical); return r.value, r.unit },
     get_position_all        = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetPosition(self.owner.raw, .All); return r.value, r.unit },
 
     get_border_left       = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .Left) },
@@ -135,8 +155,8 @@ style_vtable := Style_VTable{
     get_border_bottom     = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .Bottom) },
     get_border_start      = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .Start) },
     get_border_end        = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .End) },
-    get_border_horizontal = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .Horizontal) },
-    get_border_vertical   = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .Vertical) },
+    get_border_x = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .Horizontal) },
+    get_border_y   = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .Vertical) },
     get_border_all        = proc(self: ^Style) -> f32 { return YG.NodeStyleGetBorder(self.owner.raw, .All) },
 
     get_gap_column = proc(self: ^Style) -> (f32, unit) { r := YG.NodeStyleGetGap(self.owner.raw, .Column); return r, px },
@@ -149,6 +169,7 @@ style_vtable := Style_VTable{
     get_line_height = proc(self: ^Style) -> (f32, unit) { st := Resolve_Text_Style(self.owner); return st.line_height, st.line_height_unit },
     get_font_weight = proc(self: ^Style) -> FontWeight { return Resolve_Text_Style(self.owner).font_weight },
 
+    set_z_index         = proc(self: ^Style, val: i32) -> ^Style {self.owner.z_index = val; return self},
     set_direction       = proc(self: ^Style, val: Direction) -> ^Style { YG.NodeStyleSetDirection(self.owner.raw, val); return self },
     set_flex_direction  = proc(self: ^Style, val: FlexDirection) -> ^Style { YG.NodeStyleSetFlexDirection(self.owner.raw, val); return self },
     set_justify_content = proc(self: ^Style, val: Justify) -> ^Style { YG.NodeStyleSetJustifyContent(self.owner.raw, val); return self },
@@ -158,6 +179,8 @@ style_vtable := Style_VTable{
     set_position_type   = proc(self: ^Style, val: Position) -> ^Style { YG.NodeStyleSetPositionType(self.owner.raw, val); return self },
     set_wrap            = proc(self: ^Style, val: Wrap) -> ^Style { YG.NodeStyleSetFlexWrap(self.owner.raw, val); return self },
     set_display         = proc(self: ^Style, val: Display) -> ^Style { YG.NodeStyleSetDisplay(self.owner.raw, val); return self },
+    set_select_mode     = proc(self: ^Style, val: User_Select) -> ^Style { _stored(self).select_mode = val; return self },
+    set_pointer_events  = proc(self: ^Style, val: Pointer_Events) -> ^Style { _stored(self).pointer_events = val; return self },
     set_overflow        = proc(self: ^Style, val: Overflow) -> ^Style { _set_overflow(self.owner, val, val); return self },
     set_overflow_x      = proc(self: ^Style, val: Overflow) -> ^Style { s := _stored(self); _set_overflow(self.owner, val, s.overflow_y); return self },
     set_overflow_y      = proc(self: ^Style, val: Overflow) -> ^Style { s := _stored(self); _set_overflow(self.owner, s.overflow_x, val); return self },
@@ -181,8 +204,8 @@ style_vtable := Style_VTable{
     set_margin_bottom     = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Bottom, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
     set_margin_start      = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Start, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
     set_margin_end        = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .End, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
-    set_margin_horizontal = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Horizontal, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
-    set_margin_vertical   = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Vertical, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
+    set_margin_x = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Horizontal, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
+    set_margin_y   = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Vertical, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
     set_margin_all        = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .All, v, u, YG.NodeStyleSetMargin, YG.NodeStyleSetMarginPercent, YG.NodeStyleSetMarginAuto); return self },
 
     set_padding_left       = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Left, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
@@ -191,8 +214,8 @@ style_vtable := Style_VTable{
     set_padding_bottom     = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Bottom, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
     set_padding_start      = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Start, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
     set_padding_end        = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .End, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
-    set_padding_horizontal = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Horizontal, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
-    set_padding_vertical   = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Vertical, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
+    set_padding_x = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Horizontal, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
+    set_padding_y   = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Vertical, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
     set_padding_all        = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .All, v, u, YG.NodeStyleSetPadding, YG.NodeStyleSetPaddingPercent); return self },
 
     set_position_left       = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Left, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
@@ -201,8 +224,8 @@ style_vtable := Style_VTable{
     set_position_bottom     = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Bottom, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
     set_position_start      = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Start, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
     set_position_end        = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .End, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
-    set_position_horizontal = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Horizontal, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
-    set_position_vertical   = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Vertical, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
+    set_position_x = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Horizontal, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
+    set_position_y   = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .Vertical, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
     set_position_all        = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_edge(self.owner.raw, .All, v, u, YG.NodeStyleSetPosition, YG.NodeStyleSetPositionPercent, YG.NodeStyleSetPositionAuto); return self },
 
     set_border_left       = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Left, v); return self },
@@ -211,8 +234,8 @@ style_vtable := Style_VTable{
     set_border_bottom     = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Bottom, v); return self },
     set_border_start      = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Start, v); return self },
     set_border_end        = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .End, v); return self },
-    set_border_horizontal = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Horizontal, v); return self },
-    set_border_vertical   = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Vertical, v); return self },
+    set_border_x = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Horizontal, v); return self },
+    set_border_y   = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Vertical, v); return self },
     set_border_all        = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .All, v); return self },
     set_gap_column        = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_value_gutter(self.owner.raw, .Column, v, u); return self },
     set_gap_row           = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_value_gutter(self.owner.raw, .Row, v, u); return self },
@@ -312,4 +335,37 @@ Resolve_Text_Style :: proc(n: ^BaseNode) -> (out: Text_Style) {
     }
     if out.font_weight == 0 do out.font_weight = text.WEIGHT_NORMAL
     return
+}
+
+Resolve_User_Select :: proc(n: ^BaseNode) -> User_Select {
+    if n == nil do return .Text
+    if n._internal_style != nil {
+        specified := (cast(^Style)n._internal_style).select_mode
+        if specified != .Auto do return specified
+    }
+    if n.parent == nil do return .Text
+    parent := Resolve_User_Select(n.parent)
+    if parent == .None || parent == .All do return parent
+    return .Text
+}
+
+// Unlike user-select, a `None` here does not force descendants: children stay
+// hittable on `Auto`, matching CSS. `Inherit` is the opt-in that walks up.
+Resolve_Pointer_Events :: proc(n: ^BaseNode) -> Pointer_Events {
+    if n == nil do return .Auto
+    if n._internal_style != nil {
+        specified := (cast(^Style)n._internal_style).pointer_events
+        if specified != .Inherit do return specified
+    }
+    if n.parent == nil do return .Auto
+    return Resolve_Pointer_Events(n.parent)
+}
+
+User_Select_All_Scope :: proc(n: ^BaseNode) -> ^BaseNode {
+    if Resolve_User_Select(n) != .All do return nil
+    scope := n
+    for p := n.parent; p != nil && Resolve_User_Select(p) == .All; p = p.parent {
+        scope = p
+    }
+    return scope
 }

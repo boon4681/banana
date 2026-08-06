@@ -11,6 +11,30 @@ import YG "src:yoga"
 
 MeasureMode     :: YG.MeasureMode
 MeasureCallback :: proc(self: ^Node, w: f32, w_mode: MeasureMode, h: f32, h_mode: MeasureMode) -> (out_w, out_h: f32)
+Hook_Callback   :: proc(self: ^BaseNode, ctx: rawptr)
+
+// Core lifecycle where ordered hooks can run.
+Hooks :: enum {
+    // Node and descendants are awake and component `on_awake` has run.
+    After_Awake,
+    // Layout rectangles are current and component `on_layout` has run.
+    After_Layout,
+    // Descendants are already freed; component `on_free` has not run yet.
+    Before_Free,
+}
+
+Hook_Entry :: struct {
+    callback: Hook_Callback,
+    ctx:      rawptr,
+}
+
+// Yoga calls back in with no Odin context.
+// Sneaky way to fix memory leak by odin cuz memory got free with different allocator.
+@(private="file")
+_measure_ctx: runtime.Context
+@(private="file")
+_measure_ctx_set: bool
+
 ClipMode        :: painter.ClipMode
 UNDEFINED       :: YG.UNDEFINED
 INFINITY        :: YG.INFINITY
@@ -54,10 +78,16 @@ BaseNode :: struct {
     draw:    proc(self: ^BaseNode), // `draw` is function that user override to render things. Get the active painter with painter.get().
     process: proc(self: ^BaseNode), // this is update method for node logic in user space
 
+    // Optional read-only text capability.
+    using text_content: ^Text_Content_Interface,
+
     add:            proc(self: ^BaseNode, kids: ..^BaseNode) -> ^BaseNode,
     insert:         proc(self: ^BaseNode, kid: ^BaseNode, index: int) -> ^BaseNode,
     remove:         proc(self: ^BaseNode, kid: ^BaseNode) -> ^BaseNode,
     index_of:       proc(self: ^BaseNode, kid: ^BaseNode) -> int,
+    add_hook:       proc(self: ^BaseNode, at: Hooks, callback: Hook_Callback, ctx: rawptr = nil),
+    remove_hook:    proc(self: ^BaseNode, at: Hooks, callback: Hook_Callback, ctx: rawptr = nil) -> bool,
+    run_hooks:      proc(self: ^BaseNode, at: Hooks),
     compute_layout: proc(self: ^BaseNode, width: f32 = UNDEFINED, height: f32 = UNDEFINED, dir: YG.Direction = .LTR),
     find:           proc(self: ^BaseNode, path: string) -> ^BaseNode,
     get_rect:       proc(self: ^BaseNode, which: RectType = .Border) -> common.Rect,
@@ -67,11 +97,14 @@ BaseNode :: struct {
     measure:        MeasureCallback,
     dirty:          proc(self: ^BaseNode),
 
-    on:        proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Event_Signal), capture := false, once := false) -> uint,
-    off:       proc(n: ^BaseNode, type: string, cb: proc(s: ^events.Event_Signal)),
+    on:        proc(n: ^BaseNode, type: string, cb: events.Callback, capture := false, once := false) -> uint,
+    off:       proc(n: ^BaseNode, type: string, cb: events.Callback),
     on_awake:  proc(self: ^BaseNode), // EVENT fired after node being awake
     on_free:   proc(self: ^BaseNode), // EVENT CALLBACK fired before free
     on_layout: proc(self: ^BaseNode), // EVENT CALLBACK fired before layout update
+
+    // Callback context ownership remains with the registering system.
+    hooks: map[Hooks][dynamic]Hook_Entry,
 
     awaken:      bool,
     freed:       bool,
@@ -126,6 +159,9 @@ Init :: proc(n: ^Node, key: Maybe(string) = nil) {
     n.insert = _node_insert
     n.remove = _node_remove
     n.index_of = _node_index_of
+    n.add_hook = _add_hook
+    n.remove_hook = _remove_hook
+    n.run_hooks = _run_hooks
     n.compute_layout = _node_compute_layout
     n.find = _node_find
     n.get_rect = _node_get_rect
@@ -135,6 +171,7 @@ Init :: proc(n: ^Node, key: Maybe(string) = nil) {
     n.dirty = _node_dirty
     n.on = _on
     n.off = _off
+    events.bus_init(&n.bus)
 
     YG.NodeSetContext(n.raw, n)
 }
@@ -152,7 +189,14 @@ _node_dirty :: proc(self: ^Node) {
 
 @(private="file")
 _apply_measure :: proc(self: ^Node) {
+    _capture_measure_context()
     YG.NodeSetMeasureFunc(self.raw, _measure_trampoline)
+}
+
+@(private="file")
+_capture_measure_context :: proc() {
+    _measure_ctx = context
+    _measure_ctx_set = true
 }
 
 @(private="file")
@@ -163,7 +207,7 @@ _measure_trampoline :: proc "c" (
 	height: f32,
 	height_mode: YG.MeasureMode,
 ) -> YG.Size {
-    context = runtime.default_context()
+    context = _measure_ctx if _measure_ctx_set else runtime.default_context()
     n := cast(^Node)YG.NodeGetContext(node)
     if n == nil || n.measure == nil do return YG.Size{0, 0}
     w, h := n.measure(n, width, width_mode, height, height_mode)
@@ -292,6 +336,8 @@ _node_free :: proc(self: ^BaseNode) {
     for c in self.children do _node_free(c)
     delete(self.children)
 
+    self->run_hooks(.Before_Free)
+    _destroy_hooks(self)
     if self.on_free != nil do self.on_free(self)
     events.bus_destroy(&self.bus)
 
@@ -302,12 +348,65 @@ _node_free :: proc(self: ^BaseNode) {
 }
 
 @(private="file")
-_on :: proc(n: ^Node, type: string, cb: proc(s: ^events.Event_Signal), capture := false, once := false) -> uint {
+_add_hook :: proc(self: ^BaseNode, at: Hooks, callback: Hook_Callback, ctx: rawptr = nil) {
+    if self == nil || callback == nil do return
+    if self.hooks == nil do self.hooks = make(map[Hooks][dynamic]Hook_Entry)
+
+    entries := self.hooks[at]
+    append(&entries, Hook_Entry{callback, ctx})
+    self.hooks[at] = entries
+}
+
+@(private="file")
+_remove_hook :: proc(self: ^BaseNode, at: Hooks, callback: Hook_Callback, ctx: rawptr = nil) -> bool {
+    if self == nil || self.hooks == nil || callback == nil do return false
+    entries, ok := self.hooks[at]
+    if !ok do return false
+
+    for entry, index in entries {
+        if entry.callback != callback || entry.ctx != ctx do continue
+        ordered_remove(&entries, index)
+        if len(entries) == 0 {
+            delete(entries)
+            delete_key(&self.hooks, at)
+            if len(self.hooks) == 0 {
+                delete(self.hooks)
+                self.hooks = nil
+            }
+        } else {
+            self.hooks[at] = entries
+        }
+        return true
+    }
+    return false
+}
+
+@(private="file")
+_run_hooks :: proc(self: ^BaseNode, at: Hooks) {
+    if self == nil || self.hooks == nil do return
+    entries, ok := self.hooks[at]
+    if !ok do return
+    for entry in entries {
+        if entry.callback != nil do entry.callback(self, entry.ctx)
+    }
+}
+
+@(private="file")
+_destroy_hooks :: proc(self: ^BaseNode) {
+    if self == nil || self.hooks == nil do return
+    for _, entries in self.hooks {
+        delete(entries)
+    }
+    delete(self.hooks)
+}
+
+@(private="file")
+_on :: proc(n: ^Node, type: string, cb: events.Callback, capture := false, once := false) -> uint {
     return events.on(&n.bus, type, cb, capture, once)
 }
 
 @(private="file")
-_off :: proc(n: ^Node, type: string, cb: proc(s: ^events.Event_Signal)) {
+_off :: proc(n: ^Node, type: string, cb: events.Callback) {
     events.off(&n.bus, type, cb)
 }
 
