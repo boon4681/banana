@@ -17,4 +17,5 @@ foreign luna {
     destroy :: proc(handle: rawptr) ---
     size    :: proc(handle: rawptr, width, height: ^f32) -> bool ---
     render  :: proc(handle: rawptr, pixels: ^u8, width, height, stride: c.int,scale_x, scale_y: f32) -> bool ---
+    set_current_color :: proc(handle: rawptr, r, g, b: u8) ---
 }

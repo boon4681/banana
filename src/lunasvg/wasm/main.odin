@@ -25,6 +25,8 @@ SOLID : string : `<svg viewBox="0 0 8 8"><rect x="0" y="0" width="8" height="8" 
 
 STYLED : string : `<svg viewBox="0 0 8 8"><style>.fill{fill:#00ff00}</style><rect class="fill" x="0" y="0" width="8" height="8"/></svg>`
 
+CURRENT : string : `<svg viewBox="0 0 8 8"><g><rect x="0" y="0" width="8" height="8" fill="currentColor"/></g></svg>`
+
 BAD : string : `<html/>`
 
 main :: proc() {
@@ -81,6 +83,32 @@ main :: proc() {
 		)
 		last := (SIZE * SIZE - 1) * 4
 		expect_value("large last a", pixels[last + 3], u8(255))
+	}
+
+	{
+		handle := luna.parse(raw_data(CURRENT), c.size_t(len(CURRENT)))
+		expect(handle != nil, "parse currentColor")
+		defer luna.destroy(handle)
+
+		pixels := make([]u8, 8 * 8 * 4)
+		defer delete(pixels)
+		expect(luna.render(handle, raw_data(pixels), 8, 8, 8 * 4, 1, 1), "render default")
+		expect_value("default r", pixels[0], u8(0))
+		expect_value("default g", pixels[1], u8(0))
+		expect_value("default b", pixels[2], u8(0))
+		expect_value("default a", pixels[3], u8(255))
+
+		luna.set_current_color(handle, 0x22, 0x88, 0xcc)
+		expect(luna.render(handle, raw_data(pixels), 8, 8, 8 * 4, 1, 1), "render current")
+		expect_value("current r", pixels[0], u8(0x22))
+		expect_value("current g", pixels[1], u8(0x88))
+		expect_value("current b", pixels[2], u8(0xcc))
+		expect_value("current a", pixels[3], u8(255))
+
+		luna.set_current_color(handle, 0x00, 0x00, 0xff)
+		expect(luna.render(handle, raw_data(pixels), 8, 8, 8 * 4, 1, 1), "render recolor")
+		expect_value("recolor r", pixels[0], u8(0x00))
+		expect_value("recolor b", pixels[2], u8(0xff))
 	}
 
 	expect(luna.parse(raw_data(BAD), c.size_t(len(BAD))) == nil, "reject non-svg")
