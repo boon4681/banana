@@ -1,6 +1,7 @@
 #include "lunasvg.h"
 #include <cstdint>
 #include <cstddef>
+#include <string>
 
 extern "C" {
 
@@ -20,6 +21,24 @@ bool banana_svg_size(void *handle, float *width, float *height) {
     *width = doc->width();
     *height = doc->height();
     return *width > 0 && *height > 0;
+}
+
+// Resolves currentColor for the whole document.
+void banana_svg_set_current_color(void *handle, uint8_t r, uint8_t g, uint8_t b) {
+    auto *doc = static_cast<lunasvg::Document *>(handle);
+    if (!doc) return;
+
+    static const char digits[] = "0123456789abcdef";
+    char css[] = "svg{color:#000000}";
+    char *hex = css + 11;
+    const uint8_t rgb[3] = {r, g, b};
+    for (int i = 0; i < 3; ++i) {
+        hex[i * 2 + 0] = digits[rgb[i] >> 4];
+        hex[i * 2 + 1] = digits[rgb[i] & 0xf];
+    }
+
+    doc->applyStyleSheet(std::string(css, sizeof(css) - 1));
+    doc->forceLayout();
 }
 
 bool banana_svg_render(void *handle, uint8_t *pixels, int width, int height,

@@ -1,5 +1,6 @@
 package svg
 
+import "core:fmt"
 import "base:runtime"
 import "core:c"
 import "src:core/common"
@@ -48,9 +49,14 @@ draw_cached :: proc(
 	dst: common.Rect,
 	preserve_aspect := true,
 	tint := common.COLOR_WHITE,
+	current_color: Maybe(common.Color) = nil,
 ) {
 	if doc == nil || doc.raw == nil || cache == nil do return
 	if doc.view_box.w <= 0 || doc.view_box.h <= 0 || dst.w <= 0 || dst.h <= 0 do return
+    
+	if color, has := current_color.?; has {
+		if set_current_color(doc, color) do invalidate(cache)
+	}
 
 	fit := dst
 	if preserve_aspect {

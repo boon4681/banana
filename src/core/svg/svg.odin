@@ -15,6 +15,7 @@ Error :: enum {
 Document :: struct {
 	raw:   rawptr,
 	view_box: common.Rect,
+	current_color: common.Color,
 }
 
 parse :: proc(source: string) -> (Document, Error) {
@@ -22,7 +23,7 @@ parse :: proc(source: string) -> (Document, Error) {
 	raw := lunasvg.parse(raw_data(source), c.size_t(len(source)))
 	if raw == nil do return {}, .Invalid_Document
 
-	doc := Document{raw = raw}
+	doc := Document{raw = raw, current_color = COLOR_CURRENT_DEFAULT}
 	w, h: f32
 	if !lunasvg.size(raw, &w, &h) {
 		lunasvg.destroy(raw)
@@ -30,6 +31,14 @@ parse :: proc(source: string) -> (Document, Error) {
 	}
 	doc.view_box = {0, 0, w, h}
 	return doc, .None
+}
+
+set_current_color :: proc(doc: ^Document, color: common.Color) -> bool {
+	if doc == nil || doc.raw == nil do return false
+	if doc.current_color.rgb == color.rgb do return false
+	lunasvg.set_current_color(doc.raw, color.r, color.g, color.b)
+	doc.current_color = color
+	return true
 }
 
 destroy :: proc(doc: ^Document) {
