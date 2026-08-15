@@ -13,10 +13,17 @@ Input_State :: struct {
     mouse_x:  f32,
     mouse_y:  f32,
     mods:     events.Mods, // latest keyboard modifier state, stamped onto mouse events
+
+    window_bus:    ^events.Bus,
+    window_target: rawptr,    // Kept as an event raw pointer to avoid import cycle.
+
+    selection: Selection_State,
 }
 
-init :: proc(im: ^Input_State, root: ^Node) {
+init :: proc(im: ^Input_State, root: ^Node, window_bus: ^events.Bus = nil, window_target: rawptr = nil) {
     im.root = root
+    im.window_bus = window_bus
+    im.window_target = window_target
 }
 
 @(private, thread_local)

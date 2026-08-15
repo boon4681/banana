@@ -4,12 +4,36 @@ import "src:core/events"
 import "src:core/hit_test"
 
 dispatch :: proc(target: ^Node, type: string, data: rawptr = nil) -> events.Event_Signal {
+	state := _active_input_state
+	window_bus: ^events.Bus
+	window_target: rawptr
+	if state != nil {
+		window_bus = state.window_bus
+		window_target = state.window_target
+	}
+
 	s := events.Event_Signal {
 		type   = type,
-		target = target,
+		target = target if target != nil else window_target,
 		data   = data,
 	}
-	if target == nil do return s
+
+	// With no node hit/focused, the Window itself is the target.
+	if target == nil {
+		if window_bus == nil || window_target == nil do return s
+		s.phase = .Target
+		s.current_target = window_target
+		events.emit_local(window_bus, &s)
+		return s
+	}
+
+	// The Window is the outermost capture/bubble boundary around the node tree.
+	if window_bus != nil && window_target != nil {
+		s.phase = .Capture
+		s.current_target = window_target
+		if !events.emit_local(window_bus, &s) do return s
+		if s.propagation_stopped do return s
+	}
 
 	chain := hit_test.ancestor_chain(target)
 
@@ -35,6 +59,12 @@ dispatch :: proc(target: ^Node, type: string, data: rawptr = nil) -> events.Even
 		s.current_target = n
 		if !events.emit_local(&n.bus, &s) do return s
 		if s.propagation_stopped do return s
+	}
+
+	if window_bus != nil && window_target != nil {
+		s.phase = .Bubble
+		s.current_target = window_target
+		events.emit_local(window_bus, &s)
 	}
 	return s
 }

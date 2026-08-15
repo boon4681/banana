@@ -1,5 +1,6 @@
 package input
 
+import "core:time"
 import "src:core/events"
 import "src:core/node"
 import "src:core/hit_test"
@@ -56,18 +57,21 @@ on_mouse_move :: proc(im: ^Input_State, x, y: f32) {
         im.hovered = target
     }
 
-    if target != nil {
-        ev := events.Mouse_Event{x = x, y = y, mods = im.mods}
-        dispatch(target, events.MOUSE_MOVE_EVENT, &ev)
-    }
+    ev := events.Mouse_Event{x = x, y = y, mods = im.mods}
+    result := dispatch(target, events.MOUSE_MOVE_EVENT, &ev)
+    move_cancelled := result.cancelled
+
+    if im.selection.gesture.dragging && !move_cancelled do selection_extend(im, x, y)
 }
 
 // Pointer left the window.
 on_mouse_leave :: proc(im: ^Input_State) {
     _active_input_state = im
-    if im.captured != nil do return
-    if im.hovered == nil do return
-
+    if im.captured != nil {
+        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, mods = im.mods}
+        dispatch(nil, events.MOUSE_LEAVE_EVENT, &ev)
+        return
+    }
     ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, mods = im.mods}
     dispatch(im.hovered, events.MOUSE_LEAVE_EVENT, &ev)
     im.hovered = nil
@@ -82,8 +86,11 @@ on_mouse_down :: proc(im: ^Input_State, button: int, mods: events.Mods = {}) {
     target := hit_test.hit_test(im.root, im.mouse_x, im.mouse_y)
     im.pressed = target
 
-    // Focus change: blur the old, focus the new (only on left button).
-    if button == 0 && target != im.focused {
+    ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
+    result := dispatch(target, events.MOUSE_DOWN_EVENT, &ev)
+    down_cancelled := result.cancelled
+
+    if button == 0 && !down_cancelled && target != im.focused {
         if im.focused != nil {
             be := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
             dispatch(im.focused, events.BLUR_EVENT, &be)
@@ -95,42 +102,48 @@ on_mouse_down :: proc(im: ^Input_State, button: int, mods: events.Mods = {}) {
         }
     }
 
-    if target != nil {
-        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
-        dispatch(target, events.MOUSE_DOWN_EVENT, &ev)
+    if button == 0 && !down_cancelled && im.captured == nil {
+        selection_begin(im, im.mouse_x, im.mouse_y, time.tick_now())
     }
 }
 
-// Button released. While captured, "mouseup" goes to the capturing node and
-// capture is released; a drag isn't a click
 on_mouse_up :: proc(im: ^Input_State, button: int) {
     _active_input_state = im
-    if im.captured != nil {
-        node := im.captured
-        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
-        dispatch(node, events.MOUSE_UP_EVENT, &ev)
-        im.captured = nil
-        im.pressed = nil
-        return
+    if button == 0 && im.selection.gesture.dragging {
+        selection_extend(im, im.mouse_x, im.mouse_y)
+        selection_end(im)
     }
 
-    target := hit_test.hit_test(im.root, im.mouse_x, im.mouse_y)
-    if target != nil {
+    captured := im.captured
+    target := captured
+    if target == nil do target = hit_test.hit_test(im.root, im.mouse_x, im.mouse_y)
+    ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
+    dispatch(target, events.MOUSE_UP_EVENT, &ev)
+
+    click_target := target if captured != nil else _common_ancestor(im.pressed, target)
+    if button == 0 && (click_target != nil || (im.pressed == nil && target == nil)) {
         ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
-        dispatch(target, events.MOUSE_UP_EVENT, &ev)
+        dispatch(click_target, events.MOUSE_CLICK_EVENT, &ev)
     }
-    if button == 0 && target != nil && target == im.pressed {
-        ev := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
-        dispatch(target, events.MOUSE_CLICK_EVENT, &ev)
-    }
+    im.captured = nil
     im.pressed = nil
+}
+
+@(private = "file")
+_common_ancestor :: proc(a, b: ^Node) -> ^Node {
+    if a == nil || b == nil do return nil
+    for x := a; x != nil; x = x.parent {
+        for y := b; y != nil; y = y.parent {
+            if x == y do return x
+        }
+    }
+    return nil
 }
 
 // Wheel scrolled. Dispatches "wheel" at the node under the cursor.
 on_wheel :: proc(im: ^Input_State, dx, dy: f32) {
     _active_input_state = im
     target := hit_test.hit_test(im.root, im.mouse_x, im.mouse_y)
-    if target == nil do return
     ev := events.Wheel_Event{x = im.mouse_x, y = im.mouse_y, delta_x = dx, delta_y = dy}
-    dispatch(target, "wheel", &ev)
+    dispatch(target, events.MOUSE_WHEEL_EVENT, &ev)
 }
