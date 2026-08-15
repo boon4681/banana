@@ -4,14 +4,20 @@ import "src:core/common"
 import "src:core/node"
 import "src:core/painter"
 import "src:core/render"
+import "src:core/text"
 
 // paints a node tree through a painter instance in stacking order.
 // Same walk as hit_test, back-to-front.
 draw :: proc(p: painter.Painter, root: ^Node) {
     prev := painter.set_active(p)
     defer painter.set_active(prev)
+    build_start := common.profile_begin(.Build_Ctx)
     ctx := build(root)
+    common.profile_end(.Build_Ctx, build_start)
     draw_ctx(p, &ctx)
+    // Every node that draws this frame must still see the rows added for it, so
+    // the atlas stays dirty until the whole tree has been walked.
+    text.msdf_atlas_clear_dirty()
 }
 
 @(private="file")
@@ -21,7 +27,11 @@ draw_ctx :: proc(p: painter.Painter, ctx: ^Stacking_Context) {
     transformed := n.transform != common.IDENTITY_TRANSFORM
     if transformed do painter.push_transform(p, n.transform, {n.rect.x, n.rect.y})
 
-    if n.draw != nil do n->draw()
+    if n.draw != nil {
+        draw_start := common.profile_begin(.Node_Draw)
+        n->draw()
+        common.profile_end(.Node_Draw, draw_start)
+    }
     clipped := n.clip_mode != .None
     if clipped do painter.push_clip(p, clip_rect(n), n.clip_mode)
     for &c in ctx.neg do draw_ctx(p, &c)
@@ -37,7 +47,11 @@ draw_ctx :: proc(p: painter.Painter, ctx: ^Stacking_Context) {
 draw_flow :: proc(p: painter.Painter, n: ^Node) {
     for c in n.children {
         if c.freed || is_stacking_context(c) do continue
-        if c.draw != nil do c->draw()
+        if c.draw != nil {
+            draw_start := common.profile_begin(.Node_Draw)
+            c->draw()
+            common.profile_end(.Node_Draw, draw_start)
+        }
         if c.clip_mode != .None {
             painter.push_clip(p, clip_rect(c), c.clip_mode)
             draw_flow(p, c)

@@ -28,9 +28,11 @@
 [submodule "libc/libunibreak"]
 	path = libc/libunibreak
 	url = https://github.com/adah1972/libunibreak.git
+
 [submodule "libc/budouxc"]
 	path = libc/budouxc
 	url = https://github.com/memononen/budouxc.git
+
 [submodule ".tools/back"]
 	path = .tools/back
 	url = https://github.com/laytan/back.git
