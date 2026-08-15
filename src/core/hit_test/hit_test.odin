@@ -1,12 +1,34 @@
 package hit_test
 
 import "src:core/common"
+import "src:core/node"
 import "src:core/paint"
+
+@(private, thread_local)
+_cache_root: ^Node
+
+@(private, thread_local)
+_cache: paint.Stacking_Context
+
+@(private, thread_local)
+_cache_valid: bool
+
+invalidate :: proc() {
+    _cache_valid = false
+    _cache_root = nil
+}
 
 hit_test :: proc(root: ^Node, x, y: f32) -> ^Node {
     if root == nil || root.freed do return nil
-    ctx := paint.build(root)
-    return hit_ctx(&ctx, x, y)
+    start := common.profile_begin(.Hit_Test)
+    if !_cache_valid || _cache_root != root {
+        _cache = paint.build(root)
+        _cache_root = root
+        _cache_valid = true
+    }
+    result := hit_ctx(&_cache, x, y)
+    common.profile_end(.Hit_Test, start)
+    return result
 }
 
 @(private)
@@ -24,6 +46,7 @@ hit_ctx :: proc(ctx: ^paint.Stacking_Context, x, y: f32) -> ^Node {
             if hit := hit_ctx(&c, x, y); hit != nil do return hit
         }
     }
+    if node.Resolve_Pointer_Events(n) == .None do return nil
     if transformed_contains(n, ctx.inverse, ctx.invertible, x, y) do return n
     return nil
 }
@@ -35,6 +58,7 @@ hit_flow :: proc(n: ^Node, inverse: common.Mat3x3, invertible: bool, x, y: f32) 
         if c.clip_mode == .None || transformed_clip_contains(c, inverse, invertible, x, y) {
             if hit := hit_flow(c, inverse, invertible, x, y); hit != nil do return hit
         }
+        if node.Resolve_Pointer_Events(c) == .None do continue
         if transformed_contains(c, inverse, invertible, x, y) do return c
     }
     return nil
