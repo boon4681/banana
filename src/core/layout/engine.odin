@@ -4,6 +4,7 @@ import YG "src:yoga"
 
 import "src:core/node"
 import "src:core/platform"
+import "src:core/signal"
 
 Node :: node.BaseNode
 
@@ -32,12 +33,18 @@ scheduler_setup :: proc() {
 }
 
 scheduler_shutdown :: proc() {
+    signal.free_graph()
     delete(_deferred)
     delete(_pending_free)
     delete(_last_avail)
 }
 
 update :: proc(root: ^Node, avail_w, avail_h: f32) {
+    if w := get_window(root); w != nil && w.loop != nil {
+        // do event loop if window contain one
+        w.loop->update()
+    }
+    signal.flush()
     run_deferred()
     flush_pending_free()
 
@@ -46,22 +53,28 @@ update :: proc(root: ^Node, avail_w, avail_h: f32) {
     changed := size_changed || YG.NodeIsDirty(root.raw)
     _last_avail[root] = {avail_w, avail_h}
 
+    nodes := make([dynamic]^Node, 0, 4096)
+    defer delete(nodes)
     if changed {
         apply_auto_min_size(root)
         YG.NodeCalculateLayout(root.raw, avail_w, avail_h, .LTR)
     }
-    cache_rects(root, 0, 0)
+    cache_rects(&nodes, root, 0, 0)
 
-    if changed do notify_layout(root)
+    if changed {
+        for n in nodes do notify_layout(n)
+    }
 
-    process(root)
+    for n in nodes do process(n)
+
 }
 
 // CSS automatic minimum size.
 @(private)
 apply_auto_min_size :: proc(n: ^Node) {
-    for c in n.children do apply_auto_min_size(c)
     if n.freed do return
+    if !YG.NodeIsDirty(n.raw) do return
+    for c in n.children do apply_auto_min_size(c)
 
     row := false
     #partial switch YG.NodeStyleGetFlexDirection(n.raw) {
@@ -90,14 +103,13 @@ apply_auto_min_size :: proc(n: ^Node) {
 notify_layout :: proc(n: ^Node) {
     if n.freed do return
     if n.on_layout != nil do n.on_layout(n)
-    for c in n.children do notify_layout(c)
+    if n.hooks != nil do n->run_hooks(.After_Layout)
 }
 
 @(private)
 process :: proc(n: ^Node) {
     if n.freed do return
     if n.process != nil do n.process(n)
-    for c in n.children do process(c)
 }
 
 @(private)
@@ -117,12 +129,13 @@ flush_pending_free :: proc() {
 }
 
 @(private)
-cache_rects :: proc(n: ^Node, ox, oy: f32) {
+cache_rects :: proc(nodes: ^[dynamic]^Node,n: ^Node, ox, oy: f32) {
+    if n.freed do return
     n.rect = n->get_rect(.Border)
     n.rect.x += ox
     n.rect.y += oy
-
-    for c in n.children do cache_rects(c, n.rect.x, n.rect.y)
+    append(nodes, n)
+    for c in n.children do cache_rects(nodes, c, n.rect.x, n.rect.y)
 }
 
 get_window :: proc(n: ^Node) -> ^platform.Window {
@@ -139,7 +152,8 @@ awake_window :: proc(w: ^platform.Window) {
 // This cannot be access outside engine cuz every node must have window ctx
 @(private="file")
 _awake_node :: proc(n: ^Node){
-    if n == nil || n.awaken do return
+    if n == nil do return
+    if n.awaken do panic("Runtime error: cannot awake node more than one times")
     for c in n.children {
         c._internal_propagate_awake = _awake_node
         c.window = n.window
@@ -151,6 +165,7 @@ _awake_node :: proc(n: ^Node){
     if n.on_awake != nil {
         n->on_awake()
     }
+    n->run_hooks(.After_Awake)
 }
 
 @(private="file")
