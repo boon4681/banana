@@ -14,4 +14,5 @@ Security? f*ck that who cares. In this current stage of the project just drop se
 Cuz i just want a language ready to go, rust is just a pain in the ass slow shit and rust-analyzer is slow as f*ck, and i need to use a lot of c-lib and rust is not gonna cut it with their unsafe pain that ghost me.
 
 Golang? too painful to use with c-lib.
+
 C? f*ck that i hate c, c is a good language btw but to use for this project, Nah.
