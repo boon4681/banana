@@ -1,37 +1,37 @@
 package platform
 
 import "base:runtime"
-import "core:c"
+import "src:core/common"
+import "src:core/eventloop"
 import "src:core/node"
 import "src:core/painter"
 import "src:core/input"
+import "src:core/hit_test"
+import "src:core/events"
 import "src:core/render"
-import stbi "vendor:stb/image"
 
-Image_Error :: enum {
-    None,
-    Empty_Input,
-    Input_Too_Large,
-    File_Read_Failed,
-    Decode_Failed,
-    Invalid_Dimensions,
-    Allocation_Failed,
-}
+Window_On_Proc :: proc(
+    w: ^Window,
+    type: string,
+    callback: events.Callback,
+    capture := false,
+    once := false,
+) -> uint
 
-Image_Frame :: struct {
-    image: ^render.Image,
-    delay: f32, // seconds to hold this frame
-}
+Window_Off_Proc :: proc(w: ^Window, type: string, callback: events.Callback)
 
 // Context holder for platform; similar to application context
 Window :: struct {
-    platform_state: []u8,
-    renderer_state: []u8,
-    painter_state:  []u8,
+    platform_state: rawptr,
+    renderer_state: rawptr,
+    painter_state:  rawptr,
     painter:        painter.Painter,
     images:         [dynamic]^render.Image,
     allocator:      runtime.Allocator,
     root:           ^node.Node,
+    bus:            events.Bus,
+    loop:           ^eventloop.Loop,
+    frame:          rawptr, // native frame, use rawptr cuz cyclic import
     width:          int,
     height:         int,
     scale:          f32,
@@ -39,6 +39,8 @@ Window :: struct {
     // Application-owned callback context. Window never frees this pointer.
     state:      rawptr,
     on_refresh: proc(w: ^Window),
+    on:         Window_On_Proc,
+    off:        Window_Off_Proc,
     input:      input.Input_State,
     queue:      [dynamic]EVENT,
 }
@@ -54,183 +56,37 @@ New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
     w.scale = 1
     w.queue = make([dynamic]EVENT)
     w.images = make([dynamic]^render.Image, w.allocator)
+    events.bus_init(&w.bus)
+    w.loop = eventloop.create(w.allocator)
+    w.on = _window_on
+    w.off = _window_off
 
-    w.platform_state = make([]u8, PLATFORM.state_size())
-    PLATFORM.set_active_state(&w.platform_state[0])
-    glue := PLATFORM.init(&w.platform_state[0], opts, context.allocator)
+    w.platform_state = PLATFORM.create_state(context.allocator)
+    PLATFORM.set_active_state(w.platform_state)
+    glue := PLATFORM.init(w.platform_state, opts, context.allocator)
 
-    w.renderer_state = make([]u8, render.RENDERER.state_size())
-    render.RENDERER.set_active_state(&w.renderer_state[0])
+    w.renderer_state = render.RENDERER.create_state(context.allocator)
+    render.RENDERER.set_active_state(w.renderer_state)
     render.RENDERER.init(
-		&w.renderer_state[0],
+        w.renderer_state,
         glue,
         opts.width,
         opts.height,
-		{vsync = opts.vsync, msaa_samples = max(opts.msaa_samples, 1)},
-		context.allocator,
+        {vsync = opts.vsync, msaa_samples = max(opts.msaa_samples, 1)},
+        context.allocator,
     )
 
-    painter_state_size := painter.state_size()
-    if painter_state_size > 0 {
-        w.painter_state = make([]u8, painter_state_size)
-    }
-    w.painter = painter.Painter{state = raw_data(w.painter_state)}
+    w.painter_state = painter.create_state(context.allocator)
+    w.painter = painter.Painter{state = w.painter_state}
     painter.init(w.painter, context.allocator)
 
     w.scale = PLATFORM.content_scale()
 
     w.root = node.New()
-    input.init(&w.input, w.root)
+    input.init(&w.input, w.root, &w.bus, w)
     input.set_clipboard_procs({get = PLATFORM.clipboard_get, set = PLATFORM.clipboard_set})
-    PLATFORM.set_window_user_ptr(&w.platform_state[0], cast(rawptr)(w))
+    PLATFORM.set_window_user_ptr(w.platform_state, cast(rawptr)(w))
     return w
-}
-
-// Decoder used by file loading, browser fetches, and embedded assets. STB always expands the result to RGBA8.
-load_image_from_bytes :: proc(w: ^Window, encoded: []u8) -> (image: ^render.Image, err: Image_Error) {
-    if w == nil do return nil, .Decode_Failed
-    if len(encoded) == 0 do return nil, .Empty_Input
-    if len(encoded) > int(max(c.int)) do return nil, .Input_Too_Large
-
-    x, y, source_channels: c.int
-    decoded := stbi.load_from_memory(
-        raw_data(encoded),
-        c.int(len(encoded)),
-        &x,
-        &y,
-        &source_channels,
-        4,
-    )
-    if decoded == nil do return nil, .Decode_Failed
-    defer stbi.image_free(decoded)
-
-    width, height := int(x), int(y)
-    if width <= 0 || height <= 0 do return nil, .Invalid_Dimensions
-    if width > max(int) / height / 4 do return nil, .Invalid_Dimensions
-
-    byte_count := width * height * 4
-    pixels, alloc_err := make([]u8, byte_count, w.allocator)
-    if alloc_err != nil do return nil, .Allocation_Failed
-    copy(pixels, decoded[:byte_count])
-
-    image = new(render.Image, w.allocator)
-    image^ = render.Image {
-        data   = pixels,
-        w      = u32(width),
-        h      = u32(height),
-        format = .RGBA8,
-    }
-    append(&w.images, image)
-    return image, .None
-}
-
-load_image_frames :: proc(w: ^Window, encoded: []u8) -> (frames: []Image_Frame, err: Image_Error) {
-    if w == nil do return nil, .Decode_Failed
-    if len(encoded) == 0 do return nil, .Empty_Input
-    if len(encoded) > int(max(c.int)) do return nil, .Input_Too_Large
-
-    // stb only animates GIF; anything else decodes as a lone frame.
-    if !_is_gif(encoded) {
-        image := load_image_from_bytes(w, encoded) or_return
-        single, alloc_err := make([]Image_Frame, 1, w.allocator)
-        if alloc_err != nil {
-            free_image(w, image)
-            return nil, .Allocation_Failed
-        }
-        single[0] = {image = image, delay = 0}
-        return single, .None
-    }
-
-    delays: [^]c.int
-    x, y, z, source_channels: c.int
-    decoded := stbi.load_gif_from_memory(
-        raw_data(encoded),
-        c.int(len(encoded)),
-        &delays,
-        &x,
-        &y,
-        &z,
-        &source_channels,
-        4,
-    )
-    if decoded == nil do return nil, .Decode_Failed
-    defer stbi.image_free(decoded)
-    defer if delays != nil do stbi.image_free(delays)
-
-    width, height, count := int(x), int(y), int(z)
-    if width <= 0 || height <= 0 || count <= 0 do return nil, .Invalid_Dimensions
-    if width > max(int) / height / 4 do return nil, .Invalid_Dimensions
-    frame_bytes := width * height * 4
-    if count > max(int) / frame_bytes do return nil, .Invalid_Dimensions
-
-    out, alloc_err := make([]Image_Frame, count, w.allocator)
-    if alloc_err != nil do return nil, .Allocation_Failed
-
-    for i in 0 ..< count {
-        pixels, pix_err := make([]u8, frame_bytes, w.allocator)
-        if pix_err != nil {
-            for j in 0 ..< i do free_image(w, out[j].image)
-            delete(out, w.allocator)
-            return nil, .Allocation_Failed
-        }
-        copy(pixels, decoded[i * frame_bytes:][:frame_bytes])
-
-        image := new(render.Image, w.allocator)
-        image^ = render.Image {
-            data   = pixels,
-            w      = u32(width),
-            h      = u32(height),
-            format = .RGBA8,
-        }
-        append(&w.images, image)
-
-        ms := c.int(0)
-        if delays != nil do ms = delays[i]
-        if ms <= 10 do ms = 100
-        out[i] = {
-            image = image,
-            delay = f32(ms) / 1000
-        }
-    }
-    return out, .None
-}
-
-@(private="file")
-_is_gif :: proc(encoded: []u8) -> bool {
-    return len(encoded) >= 6 &&
-        encoded[0] == 'G' && encoded[1] == 'I' && encoded[2] == 'F' &&
-        encoded[3] == '8' && (encoded[4] == '7' || encoded[4] == '9') && encoded[5] == 'a'
-}
-
-// Releases frames returned by load_image_frames, including the slice itself.
-free_image_frames :: proc(w: ^Window, frames: []Image_Frame) {
-    if w == nil || frames == nil do return
-    for f in frames do free_image(w, f.image)
-    delete(frames, w.allocator)
-}
-
-// Releases one image owned by this window. The window is made current before
-// releasing a resident GPU texture.
-free_image :: proc(w: ^Window, image: ^render.Image) -> bool {
-    if w == nil || image == nil do return false
-    for owned, i in w.images {
-        if owned != image do continue
-        make_current(w)
-        _free_image(image, w.allocator)
-        unordered_remove(&w.images, i)
-        return true
-    }
-    return false
-}
-
-@(private="file")
-_free_image :: proc(image: ^render.Image, allocator: runtime.Allocator) {
-    if image == nil do return
-    if image.texture != render.INVALID_TEXTURE {
-        render.RENDERER.unload_image(image)
-    }
-    delete(image.data, allocator)
-    runtime.mem_free(image, allocator)
 }
 
 @(private)
@@ -260,80 +116,148 @@ handle :: proc(w: ^Window, ev: EVENT) {
         }
     case TYPED:
         input.on_text(&w.input, e.codepoint)
+    case FOCUS_CHANGED:
+        event_type := events.WINDOW_FOCUS_EVENT if e.focused else events.WINDOW_BLUR_EVENT
+        _emit_window(w, event_type)
     }
 }
 
 update :: proc(w: ^Window) -> bool {
     make_current(w)
-    if PLATFORM.should_close() do return false
+    if !_continue_after_close_request(w) do return false
+    poll_start := common.profile_begin(.Poll)
     PLATFORM.poll_events()
+    common.profile_end(.Poll, poll_start)
+
+    if !_continue_after_close_request(w) do return false
     sync_size(w)
     input.set_context(&w.input)
-    for ev in w.queue do handle(w, ev)
+
+    hit_test.invalidate()
+    dispatch_start := common.profile_begin(.Dispatch)
+    for ev, i in w.queue {
+        if _, is_move := ev.(MOUSE_MOVED); is_move && i + 1 < len(w.queue) {
+            if _, next_is_move := w.queue[i + 1].(MOUSE_MOVED); next_is_move do continue
+        }
+        handle(w, ev)
+    }
     clear(&w.queue)
+    sync_click_through(w)
+    common.profile_end(.Dispatch, dispatch_start)
+    return true
+}
+
+// block window from closing if the app refuse to close
+// this got report from application layer via event bubble
+@(private = "file")
+_continue_after_close_request :: proc(w: ^Window) -> bool {
+    if !PLATFORM.should_close() do return true
+    close_request := _emit_window(w, events.WINDOW_CLOSE_REQUEST_EVENT)
+    if !close_request.cancelled do return false
+    PLATFORM.cancel_close()
     return true
 }
 
 make_current :: proc(w: ^Window) {
     _active_window = w
-    PLATFORM.set_active_state(&w.platform_state[0])
-    render.RENDERER.set_active_state(&w.renderer_state[0])
+    input.set_context(&w.input)
+    PLATFORM.set_active_state(w.platform_state)
+    render.RENDERER.set_active_state(w.renderer_state)
     render.RENDERER.make_current()
 }
 
 @(private="file")
 sync_size :: proc(w: ^Window) {
     nw, nh := PLATFORM.poll_size()
-    if nw != w.width || nh != w.height {
+    next_scale := PLATFORM.content_scale()
+    if nw != w.width || nh != w.height || next_scale != w.scale {
         w.width = nw
         w.height = nh
+        w.scale = next_scale
         render.RENDERER.resize(nw, nh)
+        resize_event := events.Window_Resize_Event {
+            width  = nw,
+            height = nh,
+            scale  = next_scale,
+        }
+        _emit_window(w, events.WINDOW_RESIZE_EVENT, &resize_event)
     }
-    w.scale = PLATFORM.content_scale()
 }
 
 // Called by the platform during window resize
 refresh :: proc(w: ^Window) {
     make_current(w)
     sync_size(w)
+    _emit_window(w, events.WINDOW_REFRESH_EVENT)
     if w.on_refresh != nil do w.on_refresh(w)
 }
 
 close :: proc(w: ^Window) {
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.request_close()
+}
+
+@(private = "file")
+_window_on :: proc(
+    w: ^Window,
+    type: string,
+    callback: events.Callback,
+    capture := false,
+    once := false,
+) -> uint {
+    if w == nil do return 0
+    return events.on(&w.bus, type, callback, capture, once)
+}
+
+@(private = "file")
+_window_off :: proc(w: ^Window, type: string, callback: events.Callback) {
+    if w == nil do return
+    events.off(&w.bus, type, callback)
+}
+
+@(private = "file")
+_emit_window :: proc(w: ^Window, type: string, data: rawptr = nil) -> events.Event_Signal {
+    signal := events.Event_Signal {
+        type           = type,
+        target         = w,
+        current_target = w,
+        phase          = .Target,
+        data           = data,
+    }
+    if w != nil do events.emit_local(&w.bus, &signal)
+    return signal
 }
 
 set_title :: proc(w: ^Window, title: string) {
     if w == nil do return
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.set_title(title)
 }
 
 // Screen-space position of the window's top-left corner.
 get_position :: proc(w: ^Window) -> (x, y: int) {
     if w == nil do return 0, 0
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     return PLATFORM.get_position()
 }
 
 // Moves the window. Dragging a custom title bar is this plus the cursor delta.
 set_position :: proc(w: ^Window, x, y: int) {
     if w == nil do return
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.set_position(x, y)
 }
 
 set_size :: proc(w: ^Window, width, height: int) {
     if w == nil do return
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.set_size(width, height)
 }
 
-// Constrains interactive resizing.
+// Constrains interactive resizing. Logical pixels, as with set_size.
 set_size_limits :: proc(w: ^Window, min_width, min_height, max_width, max_height: int) {
     if w == nil do return
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.set_size_limits(min_width, min_height, max_width, max_height)
 }
 
@@ -343,42 +267,44 @@ set_min_size :: proc(w: ^Window, width, height: int) {
 
 set_cursor :: proc(w: ^Window, shape: Cursor) {
     if w == nil do return
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.set_cursor(shape)
 }
 
 minimize :: proc(w: ^Window) {
     if w == nil do return
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.minimize()
 }
 
 is_maximized :: proc(w: ^Window) -> bool {
     if w == nil do return false
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     return PLATFORM.is_maximized()
 }
 
 toggle_maximize :: proc(w: ^Window) {
     if w == nil do return
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.toggle_maximize()
 }
 
 free :: proc(w: ^Window) {
     if w == nil do return
     make_current(w)
+    if w.root != nil do w.root->free()
     painter.shutdown(w.painter)
     for image in w.images do _free_image(image, w.allocator)
     clear(&w.images)
     render.RENDERER.shutdown()
-    PLATFORM.set_active_state(&w.platform_state[0])
+    PLATFORM.set_active_state(w.platform_state)
     PLATFORM.shutdown()
     delete(w.queue)
     delete(w.images)
-    delete(w.platform_state)
-    delete(w.renderer_state)
-    delete(w.painter_state)
-    if w.root != nil do w.root->free()
+    PLATFORM.free_state(w.platform_state, w.allocator)
+    render.RENDERER.free_state(w.renderer_state, w.allocator)
+    painter.free_state(w.painter_state, w.allocator)
+    events.bus_destroy(&w.bus)
+    eventloop.destroy(w.loop)
     runtime.mem_free(w)
 }

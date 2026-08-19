@@ -4,6 +4,7 @@ package platform
 import "base:runtime"
 import "core:c"
 import "core:strings"
+import "src:core/common"
 import "src:core/render"
 import "src:core/events"
 import "src:core/platform/wheel"
@@ -15,6 +16,7 @@ GLFW_State :: struct {
     visible: bool
 }
 
+GLFW_STATE   :: GLFW_State // this is exceptional for native_frame 
 GLFW_RELEASE :: glfw.RELEASE
 GLFW_PRESS   :: glfw.PRESS
 GLFW_REPEAT  :: glfw.REPEAT
@@ -25,17 +27,33 @@ _active: ^GLFW_State // active state for one thread multiple windows
 @(private = "file")
 _live_windows: int // counter for internal
 
+// "c" create a memory leak cuz the heap context is not the same
+// so odin free the wrong memory create segfault or memory corrupt
 @(private = "file")
-_state_size :: proc() -> int {return size_of(GLFW_State)}
+_callback_context: runtime.Context
+
+// MakeContextCurrent is a expensive, so this is a cache if the binding to the same resource.
+@(private="file", thread_local)
+_current_context: rawptr
+
+@(private = "file")
+_create_state :: proc(allocator: runtime.Allocator) -> rawptr {
+    return new(GLFW_State, allocator)
+}
+
+@(private = "file")
+_free_state :: proc(state: rawptr, allocator: runtime.Allocator) {
+    if state != nil do runtime.mem_free(state, allocator)
+}
+
+@(private="file")
+_get_active_state :: proc()->rawptr {
+    return _active
+}
 
 @(private = "file")
 _set_active_state :: proc(state: rawptr) {
     _active = cast(^GLFW_State)(state)
-}
-
-@(private = "package")
-_active_glfw_handle :: proc() -> glfw.WindowHandle {
-    return _active.handle if _active != nil else nil
 }
 
 @(private = "file")
@@ -77,6 +95,7 @@ _shutdown :: proc() {
     if _active == nil || _active.handle == nil do return
     glfw.SetWindowUserPointer(_active.handle, nil)
     glfw.SetWindowRefreshCallback(_active.handle, nil)
+    glfw.SetWindowFocusCallback(_active.handle, nil)
     glfw.SetCursorPosCallback(_active.handle, nil)
     glfw.SetCursorEnterCallback(_active.handle, nil)
     glfw.SetMouseButtonCallback(_active.handle, nil)
@@ -84,6 +103,7 @@ _shutdown :: proc() {
     glfw.SetKeyCallback(_active.handle, nil)
     glfw.SetCharCallback(_active.handle, nil)
     glfw.MakeContextCurrent(nil)
+    _current_context = nil
     glfw.DestroyWindow(_active.handle)
     _active.handle = nil
     _live_windows -= 1
@@ -116,6 +136,11 @@ _content_scale :: proc() -> f32 {
 @(private = "file")
 _request_close :: proc() {
     glfw.SetWindowShouldClose(_active.handle, true)
+}
+
+@(private = "file")
+_cancel_close :: proc() {
+    glfw.SetWindowShouldClose(_active.handle, false)
 }
 
 @(private = "file")
@@ -201,9 +226,11 @@ _toggle_maximize :: proc() {
 
 @(private = "file")
 _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
+    _callback_context = context
     _active = cast(^GLFW_State)(state)
     glfw.SetWindowUserPointer(_active.handle, ptr)
     glfw.SetWindowRefreshCallback(_active.handle, _refresh_callback)
+    glfw.SetWindowFocusCallback(_active.handle, _window_focus_callback)
     glfw.SetCursorPosCallback(_active.handle, _cursor_pos_callback)
     glfw.SetCursorEnterCallback(_active.handle, _cursor_enter_callback)
     glfw.SetMouseButtonCallback(_active.handle, _mouse_button_callback)
@@ -212,9 +239,16 @@ _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
     glfw.SetCharCallback(_active.handle, _char_callback)
 }
 
+@(private = "file")
+_window_focus_callback :: proc "c" (handle: glfw.WindowHandle, focused: c.int) {
+    context = _callback_context
+    w := cast(^Window)(glfw.GetWindowUserPointer(handle))
+    if w != nil do _push_event(w, FOCUS_CHANGED{focused = focused != 0})
+}
+
 @(private="file")
 _key_callback :: proc "c" (handle: glfw.WindowHandle, key, scancode, action, mods: c.int) {
-    context = runtime.default_context()
+    context = _callback_context
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w == nil do return
     _push_event(w, KEY{
@@ -307,7 +341,7 @@ _map_key :: proc "contextless" (key: c.int) -> events.Key {
 
 @(private="file")
 _char_callback :: proc "c" (handle: glfw.WindowHandle, codepoint: rune) {
-    context = runtime.default_context()
+    context = _callback_context
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w == nil do return
     _push_event(w, TYPED{codepoint = codepoint})
@@ -327,14 +361,14 @@ _clipboard_set :: proc(text: string) {
 
 @(private="file")
 _refresh_callback :: proc "c" (handle: glfw.WindowHandle) {
-    context = runtime.default_context()
+    context = _callback_context
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w != nil do refresh(w)
 }
 
 @(private="file")
 _cursor_pos_callback :: proc "c" (handle: glfw.WindowHandle, xpos, ypos: f64) {
-    context = runtime.default_context()
+    context = _callback_context
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w == nil do return
     fb_w, fb_h := glfw.GetFramebufferSize(handle)
@@ -354,7 +388,7 @@ _cursor_pos_callback :: proc "c" (handle: glfw.WindowHandle, xpos, ypos: f64) {
 
 @(private="file")
 _cursor_enter_callback :: proc "c" (handle: glfw.WindowHandle, entered: c.int) {
-    context = runtime.default_context()
+    context = _callback_context
     if entered != 0 do return
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w == nil do return
@@ -363,7 +397,7 @@ _cursor_enter_callback :: proc "c" (handle: glfw.WindowHandle, entered: c.int) {
 
 @(private="file")
 _mouse_button_callback :: proc "c" (handle: glfw.WindowHandle, button, action, mods: c.int) {
-    context = runtime.default_context()
+    context = _callback_context
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w == nil do return
     _push_event(w, MOUSE_BUTTON {
@@ -377,7 +411,7 @@ _mouse_button_callback :: proc "c" (handle: glfw.WindowHandle, button, action, m
 
 @(private="file")
 _scroll_callback :: proc "c" (handle: glfw.WindowHandle, dx, dy: f64) {
-    context = runtime.default_context()
+    context = _callback_context
     w := cast(^Window)(glfw.GetWindowUserPointer(handle))
     if w == nil do return
     scale := w.scale if w.scale > 0 else 1
@@ -393,18 +427,24 @@ _scroll_callback :: proc "c" (handle: glfw.WindowHandle, dx, dy: f64) {
 @(private="file")
 _make_context :: proc(state: rawptr, opts: render.Init_Options) -> bool {
     glfw.MakeContextCurrent(cast(glfw.WindowHandle)(state))
+    _current_context = state
     glfw.SwapInterval(opts.vsync ? 1 : 0)
     return true
 }
 
 @(private="file")
 _make_current :: proc(state: rawptr) {
+    if _current_context == state do return
     glfw.MakeContextCurrent(cast(glfw.WindowHandle)(state))
+    _current_context = state
 }
 
 @(private="file")
 _present :: proc(state: rawptr) {
+    swap_start := common.profile_begin(.Swap)
     glfw.SwapBuffers(cast(glfw.WindowHandle)(state))
+    common.profile_end(.Swap, swap_start)
+
     if _active.visible == false {
         glfw.ShowWindow(cast(glfw.WindowHandle)(state))
         _active.visible = true
@@ -423,7 +463,9 @@ _get_proc_address :: proc(state: rawptr, name: cstring) -> rawptr {
 }
 
 PLATFORM_GLFW :: Platform_Interface{
-    state_size          = _state_size,
+    create_state        = _create_state,
+    free_state          = _free_state,
+    get_active_state    = _get_active_state,
     set_active_state    = _set_active_state,
     init                = _init,
     shutdown            = _shutdown,
@@ -432,6 +474,7 @@ PLATFORM_GLFW :: Platform_Interface{
     poll_size           = _poll_size,
     content_scale       = _content_scale,
     request_close       = _request_close,
+    cancel_close        = _cancel_close,
     set_title           = _set_title,
     get_position        = _get_position,
     set_position        = _set_position,

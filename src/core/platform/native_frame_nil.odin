@@ -2,8 +2,66 @@
 package platform
 
 import "core:fmt"
-// Native-frame chrome is Windows-only; elsewhere this is a no-op.
 
-enable_native_frame :: proc(w: ^Window, metrics: Frame_Metrics = DEFAULT_FRAME_METRICS) {
+// Native-frame is Windows-only. The frame still exists elsewhere so the
+// setter chain compiles and runs; every setter is a no-op.
+Frame :: struct {
+    window: ^Window,
+    using _internal_vt: ^Frame_VTable,
+}
+
+@(private = "file", thread_local)
+_frame: Frame
+
+enable_native_frame :: proc(w: ^Window) -> ^Frame {
     fmt.println("warning: enable_native_frame is unsupported on this platform and has no-op")
+    if w == nil do return nil
+    _frame = Frame{window = w, _internal_vt = &frame_vtable}
+    return &_frame
+}
+
+sync_click_through :: proc(w: ^Window) {}
+
+@(private = "file")
+frame_vtable := Frame_VTable {
+    set_title_bar = proc(self: ^Frame, bar: Title_Bar) -> ^Frame {
+        fmt.println("This platform is not support set_title_bar")
+        return self
+    },
+    clear_title_bar = proc(self: ^Frame) -> ^Frame {
+        fmt.println("This platform is not support clear_title_bar")
+        return self
+    },
+    set_resize_border = proc(self: ^Frame, width: int) -> ^Frame {
+        fmt.println("This platform is not support set_resize_border")
+        return self
+    },
+    set_shadow = proc(self: ^Frame, enabled: bool) -> ^Frame {
+        fmt.println("This platform is not support set_shadow")
+        return self
+    },
+    set_clamp_maximized = proc(self: ^Frame, enabled: bool) -> ^Frame {
+        fmt.println("This platform is not support set_clamp_maximized")
+        return self
+    },
+    set_background_erase = proc(self: ^Frame, enabled: bool) -> ^Frame {
+        fmt.println("This platform is not support set_background_erase")
+        return self
+    },
+    set_top_most = proc(self: ^Frame, enabled: bool) -> ^Frame {
+        fmt.println("This platform is not support set_top_most")
+        return self
+    },
+    set_resize = proc(self: ^Frame, enabled: bool) -> ^Frame {
+        fmt.println("This platform is not support set_resize")
+        return self
+    },
+    set_always_top_most = proc(self: ^Frame, enabled: bool) -> ^Frame {
+        fmt.println("This platform is not support set_always_top_most")
+        return self
+    },
+    set_click_through = proc(self: ^Frame, enabled: bool) -> ^Frame {
+        fmt.println("This platform is not support set_always_top_most")
+        return self
+    },
 }

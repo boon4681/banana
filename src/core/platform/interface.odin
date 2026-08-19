@@ -24,7 +24,9 @@ is_decorated :: proc(opts: Init_Options) -> bool {
 }
 
 Platform_Interface :: struct #all_or_none {
-    state_size:          proc() -> int,
+    create_state:        proc(allocator: runtime.Allocator) -> rawptr,
+    free_state:          proc(state: rawptr, allocator: runtime.Allocator),
+    get_active_state:    proc() -> rawptr,
     set_active_state:    proc(state: rawptr),
     init:                proc(state: rawptr, opts: Init_Options, allocator: runtime.Allocator,) -> render.Render_Interface,
     shutdown:            proc(),
@@ -33,6 +35,7 @@ Platform_Interface :: struct #all_or_none {
     poll_size:           proc() -> (w, h: int),
     content_scale:       proc() -> f32, // browser devicePixelRatio equivalent
     request_close:       proc(),
+    cancel_close:        proc(),
     set_title:           proc(title: string),
     get_position:        proc() -> (x, y: int),
     set_position:        proc(x, y: int),
@@ -47,13 +50,14 @@ Platform_Interface :: struct #all_or_none {
     clipboard_set:       proc(text: string),
 }
 
-RESIZED      :: struct { fb_w, fb_h: i32, width, height: f32 }
-MOUSE_MOVED  :: struct { x, y: f32 }
-MOUSE_LEFT   :: struct {}
-MOUSE_BUTTON :: struct { button, action: int, mods: events.Mods, x, y: f32 }
-MOUSE_WHEEL  :: struct { dx, dy, x, y: f32 }
-KEY          :: struct { code: events.Key, key: rune, scancode, action: int, mods: events.Mods }
-TYPED        :: struct { codepoint: rune }
+RESIZED       :: struct { fb_w, fb_h: i32, width, height: f32 }
+MOUSE_MOVED   :: struct { x, y: f32 }
+MOUSE_LEFT    :: struct {} // left node, not left click
+MOUSE_BUTTON  :: struct { button, action: int, mods: events.Mods, x, y: f32 }
+MOUSE_WHEEL   :: struct { dx, dy, x, y: f32 }
+KEY           :: struct { code: events.Key, key: rune, scancode, action: int, mods: events.Mods }
+TYPED         :: struct { codepoint: rune }
+FOCUS_CHANGED :: struct { focused: bool }
 
 EVENT :: union {
 	RESIZED,
@@ -63,4 +67,5 @@ EVENT :: union {
 	MOUSE_WHEEL,
 	KEY,
 	TYPED,
+	FOCUS_CHANGED,
 }
