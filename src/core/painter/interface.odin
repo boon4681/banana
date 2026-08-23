@@ -26,18 +26,26 @@ Glyph_Quad :: struct {
 }
 
 MSDF_Quad :: struct {
-    rect: common.Rect,
-    // left, bottom, right, top in atlas UV coordinates.
-    uv: [4]f32,
+    rect:     common.Rect,
+    atlas:    [4]f32,
     tint:     common.Color,
     has_tint: bool,
 }
 
 Glyph_Cache :: struct {
-    mesh:           render.Glyph_Mesh,
-    source_version: u64,
-    color:          common.Color,
-    valid:          bool,
+    mesh:                      render.Glyph_Mesh,
+    source_version:            u64,
+    color:                     common.Color,
+    atlas_width, atlas_height: int,
+    valid:                     bool,
+}
+
+MSDF_Atlas :: struct {
+    pixels:             []u8,
+    width, height:      int,
+    version:            u64,
+    dirty_lo, dirty_hi: int,
+    pixel_range:        f32,
 }
 
 Mesh_Cache :: struct {
@@ -47,9 +55,11 @@ Mesh_Cache :: struct {
 }
 
 Painter_Interface :: struct #all_or_none {
-    state_size: proc() -> int,
-    init:       proc(p: Painter, allocator: runtime.Allocator),
-    shutdown:   proc(p: Painter),
+    create_state: proc(allocator: runtime.Allocator) -> rawptr,
+    free_state:   proc(state: rawptr, allocator: runtime.Allocator),
+
+    init:     proc(p: Painter, allocator: runtime.Allocator),
+    shutdown: proc(p: Painter),
 
     begin_frame: proc(p: Painter, color: common.Color),
     end_frame:   proc(p: Painter),
@@ -62,7 +72,8 @@ Painter_Interface :: struct #all_or_none {
     mesh_cached:   proc(p: Painter, cache: ^Mesh_Cache, source_version: u64, vertices: []render.Vertex, indices: []u32),
     glyphs:        proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color),
     glyphs_cached: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color),
-    msdf_cached:   proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas_pixels: []u8, atlas_w, atlas_h: int, atlas_version: u64, pixel_range: f32, quads: []MSDF_Quad, color: common.Color),
+    robin_cached:  proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, data: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color),
+    msdf_cached:   proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas: MSDF_Atlas, quads: []MSDF_Quad, color: common.Color),
 
 	// Device px per local px under the current transform stack; lets text snap
 	// baselines to physical pixels at fractional display scales.

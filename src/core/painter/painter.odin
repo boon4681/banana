@@ -24,8 +24,12 @@ when PAINTER_NAME == "vector" {
     #panic("'" + PAINTER_NAME + "' is not a valid banana_PAINTER. Available: " + AVAILABLE_PAINTERS)
 }
 
+@(private="file", thread_local)
+_active: Painter
+
 init           :: proc(p: Painter, allocator: runtime.Allocator) { PAINTER.init(p, allocator) }
-state_size     :: proc() -> int { return PAINTER.state_size() }
+create_state   :: proc(allocator: runtime.Allocator) -> rawptr { return PAINTER.create_state(allocator)}
+free_state     :: proc(state: rawptr, allocator: runtime.Allocator) { PAINTER.free_state(state, allocator)}
 shutdown       :: proc(p: Painter) { PAINTER.shutdown(p) }
 begin_frame    :: proc(p: Painter, color: common.Color) { PAINTER.begin_frame(p, color) }
 end_frame      :: proc(p: Painter) { PAINTER.end_frame(p) }
@@ -37,23 +41,21 @@ triangles      :: proc(p: Painter, points: [][2]f32, indices: []u32, color: comm
 mesh_cached    :: proc(p: Painter, cache: ^Mesh_Cache, source_version: u64, vertices: []render.Vertex, indices: []u32) { PAINTER.mesh_cached(p, cache, source_version, vertices, indices) }
 glyphs         :: proc(p: Painter, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) { PAINTER.glyphs(p, curves, version, quads, color)}
 glyphs_cached  :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, curves: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) { PAINTER.glyphs_cached(p, cache, source_version, curves, version, quads, color)}
-msdf_cached    :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas_pixels: []u8, atlas_w, atlas_h: int, atlas_version: u64, pixel_range: f32, quads: []MSDF_Quad, color: common.Color) { PAINTER.msdf_cached(p, cache, source_version, atlas_pixels, atlas_w, atlas_h, atlas_version, pixel_range, quads, color)}
+robin_cached   :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, data: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) { PAINTER.robin_cached(p, cache, source_version, data, version, quads, color)}
+msdf_cached    :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas: MSDF_Atlas, quads: []MSDF_Quad, color: common.Color) { PAINTER.msdf_cached(p, cache, source_version, atlas, quads, color)}
 pixel_scale    :: proc(p: Painter) -> [2]f32 { return PAINTER.pixel_scale(p) }
 push_clip      :: proc(p: Painter, r: common.Rect, mode: ClipMode) { PAINTER.push_clip(p, r, mode) }
 pop_clip       :: proc(p: Painter) { PAINTER.pop_clip(p) }
 push_transform :: proc(p: Painter, t: common.Transform, at: [2]f32) { PAINTER.push_transform(p, t, at) }
 pop_transform  :: proc(p: Painter) { PAINTER.pop_transform(p) }
 
-@(private="file", thread_local)
-_active: Painter
-
 set_active :: proc(p: Painter) -> (prev: Painter) {
-	prev = _active
-	_active = p
-	return prev
+    prev = _active
+    _active = p
+    return prev
 }
 
 get :: proc(loc := #caller_location) -> Painter {
-	assert(_active.state != nil, "painter.get() called outside a draw pass", loc)
-	return _active
+    assert(_active.state != nil, "painter.get() called outside a draw pass", loc)
+    return _active
 }

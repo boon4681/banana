@@ -6,9 +6,14 @@ import "base:runtime"
 import "src:core/render"
 import "src:core/common"
 
-@(private="file")
-_state_size :: proc() -> int {
-    return 0
+@(private = "file")
+_create_state :: proc(allocator: runtime.Allocator) -> rawptr {
+    return nil
+}
+
+@(private = "file")
+_free_state :: proc(state: rawptr, allocator: runtime.Allocator) {
+    if state != nil do runtime.mem_free(state, allocator)
 }
 
 @(private="file")
@@ -72,7 +77,12 @@ _glyphs_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, cur
 }
 
 @(private="file")
-_msdf_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas_pixels: []u8, atlas_w, atlas_h: int, atlas_version: u64, pixel_range: f32, quads: []MSDF_Quad, color: common.Color) {
+_robin_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, data: [][2]f32, version: u64, quads: []Glyph_Quad, color: common.Color) {
+    panic("nil painter")
+}
+
+@(private="file")
+_msdf_cached :: proc(p: Painter, cache: ^Glyph_Cache, source_version: u64, atlas: MSDF_Atlas, quads: []MSDF_Quad, color: common.Color) {
     panic("nil painter")
 }
 
@@ -102,7 +112,8 @@ _pop_transform :: proc(p: Painter) {
 }
 
 PAINTER_NIL :: Painter_Interface {
-    state_size     = _state_size,
+    create_state   = _create_state,
+    free_state     = _free_state,
     init           = _init,
     shutdown       = _shutdown,
     begin_frame    = _begin_frame,
@@ -115,6 +126,7 @@ PAINTER_NIL :: Painter_Interface {
     mesh_cached    = _mesh_cached,
     glyphs         = _glyphs,
     glyphs_cached  = _glyphs_cached,
+    robin_cached   = _robin_cached,
     msdf_cached    = _msdf_cached,
     pixel_scale    = _pixel_scale,
     push_clip      = _push_clip,
