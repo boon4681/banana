@@ -2,6 +2,7 @@ package text
 
 import "core:c"
 import "core:math"
+import "src:core/common"
 import stbtt "vendor:stb/truetype"
 
 Glyph :: struct {
@@ -34,6 +35,17 @@ curve_data :: proc() -> ([][2]f32, u64) {
     return _curves[:], _version
 }
 
+// Glyph structs index into these shared buffers, so they outlive any one face
+// and are only released when the whole set is torn down.
+@(private="package")
+_curves_destroy :: proc() {
+    delete(_curves)
+    _curves = nil
+    delete(_contour_ends)
+    _contour_ends = nil
+    _version += 1
+}
+
 glyph_contours :: proc(g: Glyph) -> []u32 {
     return _contour_ends[g.contour_base:][:g.contour_count]
 }
@@ -41,6 +53,8 @@ glyph_contours :: proc(g: Glyph) -> []u32 {
 glyph :: proc(f: ^Face, gid: u32, embold: f32 = 0) -> Glyph {
     key := Glyph_Key{gid, embolden_steps(embold)}
     if g, ok := f.glyphs[key]; ok do return g
+    outline_zone := common.profile_begin(.Glyph_Outline)
+    defer common.profile_end(.Glyph_Outline, outline_zone)
 
     verts: [^]stbtt.vertex
     nv := stbtt.GetGlyphShape(&f.info, c.int(gid), &verts)

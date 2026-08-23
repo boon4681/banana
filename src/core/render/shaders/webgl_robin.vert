@@ -1,19 +1,19 @@
-#version 330 core
+#version 300 es
 layout(location = 0) in vec2 a_pos;
 layout(location = 1) in vec2 a_uv;
 layout(location = 2) in vec4 a_color;
-layout(location = 3) in uint a_mode;
-out vec2 v_uv;
-out vec4 v_color;
-flat out uint v_mode;
+layout(location = 3) in uvec2 a_robin;
 uniform vec2 u_resolution;
 uniform mat3 u_transform;
+out vec2 v_uv;
+out vec4 v_color;
+flat out uvec2 v_robin;
 void main() {
 	vec2 pos = (u_transform * vec3(a_pos, 1.0)).xy;
-	vec2 ndc = (pos / u_resolution) * 2.0 - 1.0;
-	ndc.y = -ndc.y;
+	vec2 ndc = vec2(pos.x / u_resolution.x * 2.0 - 1.0,
+	                1.0 - pos.y / u_resolution.y * 2.0);
 	gl_Position = vec4(ndc, 0.0, 1.0);
 	v_uv = a_uv;
 	v_color = a_color;
-	v_mode = a_mode;
+	v_robin = a_robin;
 }

@@ -21,17 +21,17 @@ COLOR_LAYER_FOREGROUND :: 0xFFFF
 @(private = "file")
 _Color_Table :: struct {
     // Parsed once on first use.
-    loaded:      bool,
-    base:        []u8, // COLR base glyph records, 6 bytes each
-    layers:      []u8, // COLR layer records, 4 bytes each
-    palette:     [][4]u8,
-    colr_blob:   HB.Blob,
-    cpal_blob:   HB.Blob,
+    loaded:    bool,
+    base:      []u8, // COLR base glyph records, 6 bytes each
+    layers:    []u8, // COLR layer records, 4 bytes each
+    palette:   [][4]u8,
+    colr_blob: HB.Blob,
+    cpal_blob: HB.Blob,
 
-    // V1 offsets resolve against the full COLR table.
-    colr:        []u8,
-    base_list:   int, // offset of BaseGlyphList, 0 when absent
-    layer_list:  int, // offset of LayerList
+    // offsets resolve against the full COLR table.
+    colr:       []u8,
+    base_list:  int, // offset of BaseGlyphList, 0 when absent
+    layer_list: int, // offset of LayerList
 }
 
 @(private = "file")
@@ -185,9 +185,9 @@ Paint_Layer :: struct {
     shape:     common.Mat3x3, // outline placement, font units
     transform: common.Mat3x3, // gradient placement, font units
     kind:      Gradient_Kind,
-    color:     [4]u8, // Solid only
+    color:     [4]u8,  // Solid only
     p0, p1:    [2]f32, // Linear: start/end. Radial: circle centres.
-    r0, r1:    f32, // Radial only
+    r0, r1:    f32,    // Radial only
     extend:    Gradient_Extend,
     stops:     []Color_Stop,
 }
@@ -232,9 +232,9 @@ _palette_color :: proc(t: ^_Color_Table, index: u16, alpha: f32, fg: [4]u8) -> [
 
 @(private = "file")
 _read_color_line :: proc(
-    t: ^_Color_Table,
-    off: int,
-    fg: [4]u8,
+    t:         ^_Color_Table,
+    off:       int,
+    fg:        [4]u8,
     allocator: runtime.Allocator,
 ) -> (
     stops: []Color_Stop,
@@ -270,12 +270,12 @@ _Paint_Ctx :: struct {
 // Flattens the paint graph into back-to-front layers.
 @(private = "file")
 _walk_paint :: proc(
-    ctx: ^_Paint_Ctx,
-    off: int,
-    xform: common.Mat3x3,
-    shape: u32,
+    ctx:         ^_Paint_Ctx,
+    off:         int,
+    xform:       common.Mat3x3,
+    shape:       u32,
     shape_xform: common.Mat3x3,
-    depth: int,
+    depth:       int,
 ) -> bool {
     if depth > 16 || ctx.budget <= 0 do return false
     ctx.budget -= 1
@@ -456,9 +456,9 @@ _v1_record :: proc(t: ^_Color_Table, gid: u32) -> int {
 
 // Returns flattened v1 layers or nil to request the v0 fallback.
 paint_layers :: proc(
-    f: ^Face,
+    f:   ^Face,
     gid: u32,
-    fg: [4]u8 = {0, 0, 0, 255},
+    fg:  [4]u8 = {0, 0, 0, 255},
     allocator := context.temp_allocator,
 ) -> []Paint_Layer {
     if f == nil do return nil
@@ -487,4 +487,10 @@ _color_tables_destroy :: proc(f: ^Face) {
         if t.cpal_blob != nil do HB.blob_destroy(t.cpal_blob)
         delete_key(&_color_tables, f)
     }
+}
+
+@(private = "package")
+_color_tables_destroy_all :: proc() {
+    delete(_color_tables)
+    _color_tables = nil
 }

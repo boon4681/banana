@@ -18,7 +18,7 @@ Web_Texture :: struct {
 
 @(private="file")
 Web_Mesh :: struct {
-    vao:   gl.VertexArrayObject,
+    vao: gl.VertexArrayObject,
     vbo,
     ibo:   gl.Buffer,
     count: int,
@@ -34,25 +34,40 @@ Web_Target :: struct {
 
 @(private="file")
 WebGL_State :: struct {
-    glue:            Render_Interface,
-    allocator:       runtime.Allocator,
-    program:         gl.Program,
-    msdf_program:    gl.Program,
-    resolution:      i32,
-    has_texture:     i32,
-    msdf_resolution: i32,
-    msdf_range:      i32,
-    vao:             gl.VertexArrayObject,
-    vbo:             gl.Buffer,
-    ibo:             gl.Buffer,
-    textures:        [dynamic]Web_Texture,
-    meshes:          [dynamic]Web_Mesh,
-    glyph_meshes:    [dynamic]Web_Mesh,
-    targets:         [dynamic]Web_Target,
-    width:           int,
-    height:          int,
-    stencil_depth:   int,
+    glue:             Render_Interface,
+    allocator:        runtime.Allocator,
+    program:          gl.Program,
+    msdf_program:     gl.Program,
+    robin_program:    gl.Program,
+    resolution:       i32,
+    has_texture:      i32,
+    msdf_resolution:  i32,
+    msdf_range:       i32,
+    robin_resolution: i32,
+    robin_transform:  i32,
+    robin_data:       i32,
+    robin_data_width: i32,
+    robin_tex:        gl.Texture,
+    robin_atlas_width,
+    robin_atlas_height: int,
+    robin_data_version: u64,
+    max_texture_size:   int,
+    vao:                gl.VertexArrayObject,
+    vbo:                gl.Buffer,
+    ibo:                gl.Buffer,
+    textures:           [dynamic]Web_Texture,
+    meshes:             [dynamic]Web_Mesh,
+    glyph_meshes:       [dynamic]Web_Mesh,
+    robin_meshes:       [dynamic]Web_Mesh,
+    targets:            [dynamic]Web_Target,
+    width:              int,
+    height:             int,
+    stencil_depth:      int,
 }
+
+WEB_ROBIN_ENABLED     :: #config(BANANA_TEXT_ROBIN_GPU_UNSAFE, true)
+WEB_ROBIN_GRID        :: 16
+WEB_ROBIN_ATLAS_WIDTH :: 1024
 
 @(private="file")
 _state: ^WebGL_State
@@ -68,12 +83,27 @@ MSDF_VS_SOURCE :: string(#load("shaders/webgl_msdf.vert"))
 MSDF_FS_SOURCE :: string(#load("shaders/webgl_msdf.frag"))
 
 @(private="file")
-_state_size :: proc() -> int {
-    return size_of(WebGL_State)
+ROBIN_VS_SOURCE :: string(#load("shaders/webgl_robin.vert"))
+@(private="file")
+ROBIN_FS_SOURCE :: string(#load("shaders/webgl_robin.frag"))
+
+@(private = "file")
+_create_state :: proc(allocator: runtime.Allocator) -> rawptr {
+    return new(WebGL_State, allocator)
+}
+
+@(private = "file")
+_free_state :: proc(state: rawptr, allocator: runtime.Allocator) {
+    if state != nil do runtime.mem_free(state, allocator)
 }
 
 @(private="file")
-_set_state :: proc(state: rawptr) {
+_get_active_state :: proc() -> rawptr {
+    return _state
+}
+
+@(private="file")
+_set_active_state :: proc(state: rawptr) {
     _state = cast(^WebGL_State)(state)
 }
 
@@ -122,6 +152,7 @@ _init :: proc(
     _state.textures = make([dynamic]Web_Texture, 0, allocator)
     _state.meshes = make([dynamic]Web_Mesh, 0, allocator)
     _state.glyph_meshes = make([dynamic]Web_Mesh, 0, allocator)
+    _state.robin_meshes = make([dynamic]Web_Mesh, 0, allocator)
     _state.targets = make([dynamic]Web_Target, 0, allocator)
 
     assert(glue.make_context(glue.state, options), "unable to create WebGL2 context")
@@ -133,6 +164,24 @@ _init :: proc(
     _state.msdf_program = _program(MSDF_VS_SOURCE, MSDF_FS_SOURCE)
     _state.msdf_resolution = gl.GetUniformLocation(_state.msdf_program, "u_resolution")
     _state.msdf_range = gl.GetUniformLocation(_state.msdf_program, "u_px_range")
+
+    when WEB_ROBIN_ENABLED {
+        if gl.IsExtensionSupported("EXT_color_buffer_float") {
+            gl.GetExtension("EXT_color_buffer_float")
+        }
+        _state.robin_program = _program(ROBIN_VS_SOURCE, ROBIN_FS_SOURCE)
+        _state.robin_resolution = gl.GetUniformLocation(_state.robin_program, "u_resolution")
+        _state.robin_transform = gl.GetUniformLocation(_state.robin_program, "u_transform")
+        _state.robin_data = gl.GetUniformLocation(_state.robin_program, "u_robin_data")
+        _state.robin_data_width = gl.GetUniformLocation(_state.robin_program, "u_robin_data_width")
+
+        _state.robin_tex = gl.CreateTexture()
+        gl.BindTexture(gl.TEXTURE_2D, _state.robin_tex)
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, i32(gl.NEAREST))
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, i32(gl.NEAREST))
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, i32(gl.CLAMP_TO_EDGE))
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, i32(gl.CLAMP_TO_EDGE))
+    }
 
     _state.vao = gl.CreateVertexArray()
     _state.vbo = gl.CreateBuffer()
@@ -157,12 +206,23 @@ _vertex_layout :: proc(stride: int) {
     gl.VertexAttribPointer(2, 4, gl.UNSIGNED_BYTE, true, stride, 16)
 }
 
+// Glyph_Vertex also carries curve_base/curve_count, which only the ROBIN
+// program reads.
+@(private="file")
+_robin_vertex_layout :: proc(stride: int) {
+    _vertex_layout(stride)
+    gl.EnableVertexAttribArray(3)
+    gl.VertexAttribIPointer(3, 2, gl.UNSIGNED_INT, stride, 20)
+}
+
 @(private="file")
 _shutdown :: proc() {
     if _state == nil do return
 
     for mesh in _state.meshes do _delete_mesh(mesh)
     for mesh in _state.glyph_meshes do _delete_mesh(mesh)
+    for mesh in _state.robin_meshes do _delete_mesh(mesh)
+    if _state.robin_tex != 0 do gl.DeleteTexture(_state.robin_tex)
     for texture in _state.textures {
         if texture.id != 0 do gl.DeleteTexture(texture.id)
     }
@@ -175,10 +235,12 @@ _shutdown :: proc() {
     gl.DeleteVertexArray(_state.vao)
     gl.DeleteProgram(_state.program)
     gl.DeleteProgram(_state.msdf_program)
+    if _state.robin_program != 0 do gl.DeleteProgram(_state.robin_program)
 
     delete(_state.textures)
     delete(_state.meshes)
     delete(_state.glyph_meshes)
+    delete(_state.robin_meshes)
     delete(_state.targets)
 }
 
@@ -249,12 +311,12 @@ _present :: proc() {
 // Draws an already-populated VAO through the quad program.
 @(private="file")
 _draw_bound :: proc(
-    target:  Render_Target,
-    vao:     gl.VertexArrayObject,
-    count:   int,
-    texture: Texture,
-    scissor: Maybe(common.Rect),
-    blend:   Blend_Mode,
+    target:    Render_Target,
+    vao:       gl.VertexArrayObject,
+    count:     int,
+    texture:   Texture,
+    scissor:   Maybe(common.Rect),
+    blend:     Blend_Mode,
     transform: common.Mat3x3 = common.Mat3X3_IDENTITY,
 ) {
     w, h := _bind_target(target)
@@ -299,7 +361,12 @@ _draw :: proc(
 
 // Resolves `idx` into backend mesh storage, allocating on first use.
 @(private="file")
-_resolve_mesh :: proc(idx: ^u32, meshes: ^[dynamic]Web_Mesh, stride: int) -> ^Web_Mesh {
+_resolve_mesh :: proc(
+    idx:    ^u32,
+    meshes: ^[dynamic]Web_Mesh,
+    stride: int,
+    layout: proc(stride: int) = _vertex_layout,
+) -> ^Web_Mesh {
     if idx^ == 0 {
         mesh := Web_Mesh{
             vao = gl.CreateVertexArray(),
@@ -309,7 +376,7 @@ _resolve_mesh :: proc(idx: ^u32, meshes: ^[dynamic]Web_Mesh, stride: int) -> ^We
         gl.BindVertexArray(mesh.vao)
         gl.BindBuffer(gl.ARRAY_BUFFER, mesh.vbo)
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.ibo)
-        _vertex_layout(stride)
+        layout(stride)
 
         append(meshes, mesh)
         idx^ = u32(len(meshes))
@@ -332,15 +399,15 @@ _upload_mesh :: proc(mesh: ^Web_Mesh, vertices: rawptr, vertices_size: int, indi
 
 @(private="file")
 _draw_mesh :: proc(
-    target:   Render_Target,
-    mesh:     ^Mesh,
-    vertices: []Vertex,
-    indices:  []u32,
-    version:  u64,
+    target:    Render_Target,
+    mesh:      ^Mesh,
+    vertices:  []Vertex,
+    indices:   []u32,
+    version:   u64,
     transform: common.Mat3x3,
-    texture:  Texture,
-    scissor:  Maybe(common.Rect),
-    blend:    Blend_Mode,
+    texture:   Texture,
+    scissor:   Maybe(common.Rect),
+    blend:     Blend_Mode,
 ) {
     if mesh == nil do return
 
@@ -362,13 +429,13 @@ _draw_mesh :: proc(
 
 @(private="file")
 _draw_glyphs :: proc(
-    target:   Render_Target,
-    vertices: []Glyph_Vertex,
-    indices:  []u32,
-    curves:   [][2]f32,
-    version:  u64,
+    target:    Render_Target,
+    vertices:  []Glyph_Vertex,
+    indices:   []u32,
+    curves:    [][2]f32,
+    version:   u64,
     transform: common.Mat3x3,
-    scissor:  Maybe(common.Rect),
+    scissor:   Maybe(common.Rect),
 ) {
 }
 
@@ -387,13 +454,88 @@ _draw_glyph_mesh :: proc(
 }
 
 @(private="file")
+_draw_robin_mesh :: proc(
+    target:           Render_Target,
+    mesh:             ^Glyph_Mesh,
+    vertices:         []Glyph_Vertex,
+    indices:          []u32,
+    geometry_version: u64,
+    transform:        common.Mat3x3,
+    data:             [][2]f32,
+    data_version:     u64,
+    scissor:          Maybe(common.Rect),
+) {
+    when !WEB_ROBIN_ENABLED do return
+    if mesh == nil do return
+
+    m := _resolve_mesh(&mesh.idx, &_state.robin_meshes, size_of(Glyph_Vertex), _robin_vertex_layout)
+    if m == nil do return
+
+    if mesh.version != geometry_version {
+        if len(vertices) == 0 || len(indices) == 0 do return
+        _upload_mesh(m, raw_data(vertices), len(vertices) * size_of(Glyph_Vertex), indices)
+        mesh.version = geometry_version
+    }
+    if m.count == 0 do return
+
+    w, h := _bind_target(target)
+    _scissor(h, scissor)
+    _blend(.Alpha)
+
+    if _state.robin_data_version != data_version && len(data) > 0 {
+        required_rows := (len(data) + WEB_ROBIN_ATLAS_WIDTH - 1) / WEB_ROBIN_ATLAS_WIDTH
+        atlas_height := 1
+        for atlas_height < required_rows do atlas_height *= 2
+        if atlas_height > _max_texture_size() do return
+
+        gl.BindTexture(gl.TEXTURE_2D, _state.robin_tex)
+        if _state.robin_atlas_width != WEB_ROBIN_ATLAS_WIDTH ||
+           _state.robin_atlas_height != atlas_height {
+            gl.TexImage2D(
+                gl.TEXTURE_2D, 0, gl.RG32F, WEB_ROBIN_ATLAS_WIDTH, i32(atlas_height),
+                0, gl.RG, gl.FLOAT, 0, nil,
+            )
+            _state.robin_atlas_width = WEB_ROBIN_ATLAS_WIDTH
+            _state.robin_atlas_height = atlas_height
+        }
+        padded := make([][2]f32, WEB_ROBIN_ATLAS_WIDTH * atlas_height, context.temp_allocator)
+        copy(padded, data)
+        gl.TexSubImage2D(
+            gl.TEXTURE_2D, 0, 0, 0, WEB_ROBIN_ATLAS_WIDTH, i32(atlas_height),
+            gl.RG, gl.FLOAT, len(padded) * size_of([2]f32), raw_data(padded),
+        )
+        _state.robin_data_version = data_version
+    }
+
+    gl.UseProgram(_state.robin_program)
+    gl.Uniform2f(_state.robin_resolution, f32(w), f32(h))
+    gl.UniformMatrix3fv(_state.robin_transform, transmute(glm.mat3)transform)
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindTexture(gl.TEXTURE_2D, _state.robin_tex)
+    gl.Uniform1i(_state.robin_data, 0)
+    gl.Uniform1i(_state.robin_data_width, i32(_state.robin_atlas_width))
+
+    gl.BindVertexArray(m.vao)
+    gl.DrawElements(gl.TRIANGLES, m.count, gl.UNSIGNED_INT, nil)
+}
+
+@(private="file")
+_max_texture_size :: proc() -> int {
+    if _state.max_texture_size == 0 {
+        v := gl.GetParameter(gl.MAX_TEXTURE_SIZE)
+        _state.max_texture_size = int(v) if v > 0 else 2048
+    }
+    return _state.max_texture_size
+}
+
+@(private="file")
 _draw_msdf :: proc(
     target:      Render_Target,
     mesh:        ^Glyph_Mesh,
     vertices:    []Glyph_Vertex,
     indices:     []u32,
     version:     u64,
-    transform: common.Mat3x3,
+    transform:   common.Mat3x3,
     atlas:       Texture,
     pixel_range: f32,
     scissor:     Maybe(common.Rect),
@@ -624,10 +766,12 @@ _stencil_pop :: proc() {
 }
 
 RENDERER_WEBGL :: Renderer {
-    state_size            = _state_size,
+    create_state          = _create_state,
+    free_state            = _free_state,
     init                  = _init,
     shutdown              = _shutdown,
-    set_active_state      = _set_state,
+    get_active_state      = _get_active_state,
+    set_active_state      = _set_active_state,
     make_current          = _make_current,
     clear                 = _clear,
     present               = _present,
@@ -635,6 +779,7 @@ RENDERER_WEBGL :: Renderer {
     draw_mesh             = _draw_mesh,
     draw_glyphs           = _draw_glyphs,
     draw_glyph_mesh       = _draw_glyph_mesh,
+    draw_robin_mesh       = _draw_robin_mesh,
     draw_msdf_mesh        = _draw_msdf,
     create_texture        = _create_texture,
     destroy_texture       = _destroy_texture,

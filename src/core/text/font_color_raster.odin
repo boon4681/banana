@@ -240,8 +240,12 @@ color_bitmap_cached :: proc(f: ^Face, gid: u32, px_per_em: f32) -> (Color_Bitmap
 
 @(private = "package")
 _color_bitmaps_destroy :: proc(f: ^Face) {
-    for key, bm in _bitmaps {
-        if key.face != f do continue
+    doomed := make([dynamic]_Bitmap_Key, 0, len(_bitmaps), context.temp_allocator)
+    for key in _bitmaps {
+        if key.face == f do append(&doomed, key)
+    }
+    for key in doomed {
+        bm := _bitmaps[key]
         if bm.image != nil {
             render.RENDERER.unload_image(bm.image)
             free(bm.image)
@@ -251,12 +255,18 @@ _color_bitmaps_destroy :: proc(f: ^Face) {
     }
 }
 
+@(private = "package")
+_color_bitmaps_destroy_all :: proc() {
+    delete(_bitmaps)
+    _bitmaps = nil
+}
+
 // Rasterizes a COLR v1 glyph to premultiplied RGBA.
 color_bitmap :: proc(
-    f: ^Face,
-    gid: u32,
+    f:         ^Face,
+    gid:       u32,
     px_per_em: f32,
-    fg: [4]u8 = {0, 0, 0, 255},
+    fg:        [4]u8 = {0, 0, 0, 255},
     allocator := context.allocator,
 ) -> (
     Color_Bitmap,

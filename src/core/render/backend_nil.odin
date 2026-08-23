@@ -3,15 +3,25 @@ package render
 import "src:core/common"
 import "base:runtime"
 
-@(private="file")
-_state_size :: proc() -> int {
-    return 0
+@(private = "file")
+_get_active_state :: proc() -> rawptr {
+    return nil
+}
+
+@(private = "file")
+_create_state :: proc(allocator: runtime.Allocator) -> rawptr {
+    return nil
+}
+
+@(private = "file")
+_free_state :: proc(state: rawptr, allocator: runtime.Allocator) {
+    if state != nil do runtime.mem_free(state, allocator)
 }
 
 @(private="file")
 _init :: proc(
 	state:     rawptr,
-	render:      Render_Interface,
+	render:    Render_Interface,
 	width:     int,
 	height:    int,
 	options:   Init_Options,
@@ -59,15 +69,15 @@ _draw :: proc(
 
 @(private="file")
 _draw_mesh :: proc(
-    target:Render_Target,
-    mesh:^Mesh,
-    vertices:[]Vertex,
-    indices:[]u32,
-    geometry_version:u64,
-    transform:common.Mat3x3,
-    texture:Texture,
-    scissor:Maybe(common.Rect),
-    blend:Blend_Mode
+    target:           Render_Target,
+    mesh:             ^Mesh,
+    vertices:         []Vertex,
+    indices:          []u32,
+    geometry_version: u64,
+    transform:        common.Mat3x3,
+    texture:          Texture,
+    scissor:          Maybe(common.Rect),
+    blend:            Blend_Mode
 ) {
     panic("banana render backend 'nil': draw_mesh()")
 }
@@ -88,30 +98,45 @@ _draw_glyphs :: proc(
 
 @(private="file")
 _draw_glyph_mesh :: proc(
-    target: Render_Target,
-    mesh: ^Glyph_Mesh,
-    vertices: []Glyph_Vertex,
-    indices: []u32,
+    target:           Render_Target,
+    mesh:             ^Glyph_Mesh,
+    vertices:         []Glyph_Vertex,
+    indices:          []u32,
     geometry_version: u64,
-    transform: common.Mat3x3,
-    curves: [][2]f32,
-    curves_version: u64,
-    scissor: Maybe(common.Rect),
+    transform:        common.Mat3x3,
+    curves:           [][2]f32,
+    curves_version:   u64,
+    scissor:          Maybe(common.Rect),
 ) {
     panic("banana render backend 'nil': draw_glyph_mesh()")
 }
 
 @(private="file")
-_draw_msdf_mesh :: proc(
-    target: Render_Target,
-    mesh: ^Glyph_Mesh,
-    vertices: []Glyph_Vertex,
-    indices: []u32,
+_draw_robin_mesh :: proc(
+    target:           Render_Target,
+    mesh:             ^Glyph_Mesh,
+    vertices:         []Glyph_Vertex,
+    indices:          []u32,
     geometry_version: u64,
-    transform: common.Mat3x3,
-    atlas: Texture,
-    pixel_range: f32,
-    scissor: Maybe(common.Rect),
+    transform:        common.Mat3x3,
+    data:             [][2]f32,
+    data_version:     u64,
+    scissor:          Maybe(common.Rect),
+) {
+    panic("banana render backend 'nil': draw_robin_mesh()")
+}
+
+@(private="file")
+_draw_msdf_mesh :: proc(
+    target:           Render_Target,
+    mesh:             ^Glyph_Mesh,
+    vertices:         []Glyph_Vertex,
+    indices:          []u32,
+    geometry_version: u64,
+    transform:        common.Mat3x3,
+    atlas:            Texture,
+    pixel_range:      f32,
+    scissor:          Maybe(common.Rect),
 ) {
     panic("banana render backend 'nil': draw_msdf_mesh()")
 }
@@ -192,9 +217,11 @@ _stencil_pop_clip :: proc() {
 }
 
 RENDERER_NIL :: Renderer {
-    state_size            = _state_size,
+    create_state          = _create_state,
+    free_state            = _free_state,
     init                  = _init,
     shutdown              = _shutdown,
+    get_active_state      = _get_active_state,
     set_active_state      = _set_active_state,
     make_current          = _make_current,
     clear                 = _clear,
@@ -203,6 +230,7 @@ RENDERER_NIL :: Renderer {
     draw_mesh             = _draw_mesh,
     draw_glyphs           = _draw_glyphs,
     draw_glyph_mesh       = _draw_glyph_mesh,
+    draw_robin_mesh       = _draw_robin_mesh,
     draw_msdf_mesh        = _draw_msdf_mesh,
     create_texture        = _create_texture,
     destroy_texture       = _destroy_texture,

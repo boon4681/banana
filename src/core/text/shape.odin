@@ -4,41 +4,53 @@ import "base:runtime"
 import "core:c"
 import "core:strings"
 import stbtt "vendor:stb/truetype"
-import FB "src:fribidi"
+import SB "src:sheenbidi"
 import HB "src:harfbuzz"
+import TB "src:textbreak"
 
 Shaped_Glyph :: struct {
     face:    ^Face,
     gid:     u32,
     offset:  [2]f32,
     advance: f32,
-    embold:  f32, // em of synthetic bold owed by this glyph's face
+    embold:  f32,
+    // Source byte range; caret positions land on cluster boundaries.
+    cluster:     int,
+    cluster_end: int,
+    level:       SB.Level,
 }
 
 Word :: struct {
-    glyphs:            []Shaped_Glyph,
-    width:             f32,
-    level:             FB.Level, // bidi embedding level (odd = RTL)
-    space_before:      bool,     // a collapsed space precedes this word
-    break_before:      bool,     // soft-wrap opportunity before this word
-    hard_break_before: bool,     // '\n' precedes this word
+    glyphs:                 []Shaped_Glyph,
+    width:                  f32,
+    level:                  SB.Level,
+    space_before:           bool,
+    break_before:           bool,
+    preferred_break_before: bool,
+    hard_break_before:      bool,
+    start, end:             int,
+    space_start:            int,
 }
 
 Shaped_Text :: struct {
     words:         []Word,
     space_advance: f32,
+    text_len:      int,
+    allocator:     runtime.Allocator,
 }
 
-@(private = "file") _buf: HB.Buffer
+@(private = "file", thread_local) _buf: HB.Buffer
 
 @(private = "file")
-SCRIPT_COMMON :: HB.Script(0x5A797979) // 'Zyyy'
-@(private = "file")
-SCRIPT_INHERITED :: HB.Script(0x5A696E68) // 'Zinh'
-@(private = "file")
-SCRIPT_UNKNOWN :: HB.Script(0x5A7A7A7A) // 'Zzzz'
+SCRIPT_COMMON :: HB.Script(0x5A797979)
 
-shape :: proc(set: ^Font_Set, s: string, weight := WEIGHT_NORMAL, allocator := context.allocator) -> Shaped_Text {
+@(private = "file")
+SCRIPT_INHERITED :: HB.Script(0x5A696E68)
+
+@(private = "file")
+SCRIPT_UNKNOWN :: HB.Script(0x5A7A7A7A)
+
+shape :: proc(set: ^Font_Set, s: string, weight := WEIGHT_NORMAL, allocator := context.allocator, language := "") -> Shaped_Text {
     st: Shaped_Text
     if set == nil do return st
     // Borrow the platform UI face when no primary font is loaded.
@@ -49,21 +61,26 @@ shape :: proc(set: ^Font_Set, s: string, weight := WEIGHT_NORMAL, allocator := c
     words := make([dynamic]Word, allocator)
     first_par := true
     rest := s
+    base := 0
     for {
         nl := strings.index_byte(rest, '\n')
         par := rest if nl < 0 else rest[:nl]
-        _shape_paragraph(set, par, &words, !first_par, weight, allocator)
+        _shape_paragraph(set, par, &words, !first_par, weight, base, language, allocator)
         first_par = false
         if nl < 0 do break
+        base += nl + 1
         rest = rest[nl + 1:]
     }
     st.words = words[:]
+    st.text_len = len(s)
+    st.allocator = allocator
     return st
 }
 
 shaped_destroy :: proc(st: ^Shaped_Text) {
-    for w in st.words do delete(w.glyphs)
-    delete(st.words)
+    a := st.allocator if st.allocator.procedure != nil else context.allocator
+    for w in st.words do delete(w.glyphs, a)
+    delete(st.words, a)
     st^ = {}
 }
 
@@ -116,7 +133,7 @@ _script_for :: proc(r: rune) -> HB.Script {
 }
 
 @(private = "file")
-_shape_paragraph :: proc(set: ^Font_Set, par: string, words: ^[dynamic]Word, hard_break: bool, weight: FontWeight, allocator: runtime.Allocator) {
+_shape_paragraph :: proc(set: ^Font_Set, par: string, words: ^[dynamic]Word, hard_break: bool, weight: FontWeight, base: int, language: string, allocator: runtime.Allocator) {
     runes := make([dynamic]rune, context.temp_allocator)
     offs := make([dynamic]int, context.temp_allocator)
     for r, off in par {
@@ -126,75 +143,78 @@ _shape_paragraph :: proc(set: ^Font_Set, par: string, words: ^[dynamic]Word, har
     append(&offs, len(par))
     n := len(runes)
 
-    levels := make([]FB.Level, max(n, 1), context.temp_allocator)
+    levels := make([]SB.Level, max(n, 1), context.temp_allocator)
     if n > 0 {
-        types := make([]FB.Char_Type, n, context.temp_allocator)
-        btypes := make([]FB.Bracket_Type, n, context.temp_allocator)
-        str := cast([^]FB.Char)raw_data(runes)
-        FB.get_bidi_types(str, FB.Str_Index(n), raw_data(types))
-        FB.get_bracket_types(str, FB.Str_Index(n), raw_data(types), raw_data(btypes))
-        base := FB.PAR_ON
-        if FB.get_par_embedding_levels_ex(raw_data(types), raw_data(btypes), FB.Str_Index(n), &base, raw_data(levels)) == 0 {
-            for &l in levels do l = 0
+        _, ok := SB.embedding_levels(runes[:], levels)
+        if !ok {
+            for &l in levels {
+                l = 0
+            }
         }
+    }
+
+    boundaries := make([]TB.Break_Info, n + 1, context.temp_allocator)
+    phrase_model := false
+    if n > 0 {
+        lang := _break_language(runes[:], language)
+        phrase_model, _ = TB.analyze(runes[:], lang, boundaries)
     }
 
     first_word := true
     pending_space := false
-    prev_class := Break_Class.SP
+    space_start := 0
     i := 0
     for i < n {
         if _is_space(runes[i]) {
+            if !pending_space do space_start = offs[i]
             pending_space = true
             i += 1
             continue
         }
         start := i
-        cls := break_class(runes[i])
-        if is_ideographic(cls) {
-            i += 1
-        } else if cls == .SA {
-            for i < n && break_class(runes[i]) == .SA do i += 1
-        } else {
-            for i < n && !_is_space(runes[i]) {
-                c := break_class(runes[i])
-                if is_ideographic(c) || c == .SA do break
-                i += 1
-            }
-        }
-        brk := pending_space || can_break_between(prev_class, cls)
+        i += 1
+        for i < n && !_is_space(runes[i]) && !boundaries[i].line do i += 1
+        brk := pending_space || boundaries[start].line
+        preferred := pending_space || (boundaries[start].phrase if phrase_model else boundaries[start].word)
 
         word := Word {
-            level             = levels[start],
-            space_before      = pending_space,
-            break_before      = brk,
-            hard_break_before = first_word && hard_break,
+            level                  = levels[start],
+            space_before           = pending_space,
+            break_before           = brk,
+            preferred_break_before = preferred,
+            hard_break_before      = first_word && hard_break,
+            start                  = base + offs[start],
+            end                    = base + offs[i],
+            space_start            = base + (space_start if pending_space else offs[start]),
         }
-        _shape_word(set, par, runes[:], offs[:], levels, start, i, &word, weight, allocator)
+        _shape_word(set, par, runes[:], offs[:], levels, start, i, &word, weight, base, allocator)
         append(words, word)
 
         first_word = false
         pending_space = false
-        prev_class = break_class(runes[i - 1])
     }
-    // Blank (or all-space) paragraph still occupies a line.
     if first_word && hard_break {
-        append(words, Word{hard_break_before = true})
+        off := base + (space_start if pending_space else 0)
+        append(words, Word{
+            hard_break_before = true,
+            start             = off,
+            end               = off,
+            space_start       = base if pending_space else off,
+        })
     }
 }
 
 @(private = "file")
 _Run :: struct {
-    start, end: int, // rune range
-    level:      FB.Level,
+    start, end: int,
+    level:      SB.Level,
     script:     HB.Script,
     face:       ^Face,
     embold:     f32,
 }
 
 @(private = "file")
-_shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, levels: []FB.Level, start, end: int, word: ^Word, weight: FontWeight, allocator: runtime.Allocator) {
-    // Itemize by (level, script) first so face resolution sees a whole run.
+_shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, levels: []SB.Level, start, end: int, word: ^Word, weight: FontWeight, base: int, allocator: runtime.Allocator) {
     runs := make([dynamic]_Run, context.temp_allocator)
     for k in start ..< end {
         lv := levels[k]
@@ -203,7 +223,9 @@ _shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, lev
             last := &runs[len(runs) - 1]
             if last.level == lv &&
 			   (sc == HB.Script(0) || last.script == HB.Script(0) || sc == last.script) {
-                if last.script == HB.Script(0) do last.script = sc
+                if last.script == HB.Script(0) {
+                    last.script = sc
+                }
                 last.end = k + 1
                 continue
             }
@@ -211,7 +233,6 @@ _shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, lev
         append(&runs, _Run{k, k + 1, lv, sc, nil, 0})
     }
 
-    // Split uncovered runes from the surrounding run.
     split := make([dynamic]_Run, context.temp_allocator)
     for run in runs {
         k := run.start
@@ -233,7 +254,7 @@ _shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, lev
     }
     runs = split
 
-    run_levels := make([]FB.Level, len(runs), context.temp_allocator)
+    run_levels := make([]SB.Level, len(runs), context.temp_allocator)
     for run, ri in runs do run_levels[ri] = run.level
     order := make([]int, len(runs), context.temp_allocator)
     _bidi_reorder(run_levels, order)
@@ -248,7 +269,7 @@ _shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, lev
 
         HB.buffer_clear_contents(_buf)
         HB.buffer_add_utf8(_buf, raw_data(seg), c.int(len(seg)), 0, c.int(len(seg)))
-        HB.buffer_set_direction(_buf, .RTL if FB.level_is_rtl(run.level) else .LTR)
+        HB.buffer_set_direction(_buf, .RTL if SB.level_is_rtl(run.level) else .LTR)
         if run.script != HB.Script(0) {
             HB.buffer_set_script(_buf, run.script)
             if tag := script_language(u32(run.script)); tag != "" {
@@ -262,17 +283,47 @@ _shape_word :: proc(set: ^Font_Set, par: string, runes: []rune, offs: []int, lev
         infos := HB.buffer_get_glyph_infos(_buf, &count)
         pos := HB.buffer_get_glyph_positions(_buf, &count)
         inv := run.face.inv_upem
+        seg_base := base + offs[run.start]
+        rtl := SB.level_is_rtl(run.level)
+        first := len(glyphs)
         for gi in 0 ..< int(count) {
             adv := f32(pos[gi].x_advance) * inv
             if adv > 0 do adv += run.embold * 2
             append(&glyphs, Shaped_Glyph{
-                face    = run.face,
-                gid     = infos[gi].codepoint,
-                offset  = {f32(pos[gi].x_offset) * inv, f32(pos[gi].y_offset) * inv},
-                advance = adv,
-                embold  = run.embold,
+                face        = run.face,
+                gid         = infos[gi].codepoint,
+                offset      = {f32(pos[gi].x_offset) * inv, f32(pos[gi].y_offset) * inv},
+                advance     = adv,
+                embold      = run.embold,
+                cluster     = seg_base + int(infos[gi].cluster),
+                cluster_end = seg_base + int(infos[gi].cluster),
+                level       = run.level,
             })
             width += adv
+        }
+        // HarfBuzz reports cluster starts only; derive logical ends below.
+        seg_end := base + offs[run.end]
+        if rtl {
+            run_end := seg_end
+            gi := first
+            for gi < len(glyphs) {
+                cl := glyphs[gi].cluster
+                j := gi
+                for j < len(glyphs) && glyphs[j].cluster == cl do j += 1
+                for k in gi ..< j do glyphs[k].cluster_end = run_end
+                run_end = cl
+                gi = j
+            }
+        } else {
+            gi := first
+            for gi < len(glyphs) {
+                cl := glyphs[gi].cluster
+                j := gi
+                for j < len(glyphs) && glyphs[j].cluster == cl do j += 1
+                end_off := seg_end if j >= len(glyphs) else glyphs[j].cluster
+                for k in gi ..< j do glyphs[k].cluster_end = end_off
+                gi = j
+            }
         }
     }
     word.glyphs = glyphs[:]

@@ -23,6 +23,12 @@ WEIGHT_BLACK       :: FontWeight(900)
 
 Face :: struct {
     data:          []u8, // owned copy of the font file
+    // Preserved when an MSDF bundle is written, so a TTC face can be restored
+    // exactly rather than assuming its first face.
+    source_index:  int,
+    // Atlas-backed faces prefer a matching prebuilt MSDF glyph.
+    // A missing record fallback to ROBIN.
+    prefer_msdf:  bool,
     info:          stbtt.fontinfo,
     blob:          HB.Blob,
     hb_face:       HB.Face,
@@ -81,6 +87,7 @@ when ODIN_OS == .JS {
 set_register :: proc(set: ^Font_Set, data: []u8, index := 0, family := "") -> ^Face {
     f := _face_create(data, index)
     if f == nil do return nil
+    f.source_index = index
     if family != "" {
         delete(f.family)
         f.family = strings.clone(family)
@@ -121,9 +128,8 @@ _face_create :: proc(data: []u8, index: int) -> ^Face {
     return f
 }
 
-NAME :: HB.Tag(0x6E616D65) // 'name'
-
-NAME_ID_FAMILY            :: 1
+NAME                       :: HB.Tag(0x6E616D65) // 'name'
+NAME_ID_FAMILY             :: 1
 NAME_ID_TYPOGRAPHIC_FAMILY :: 16
 
 // Prefer typographic family names so weights remain grouped.
@@ -334,6 +340,13 @@ set_destroy :: proc(set: ^Font_Set) {
     delete(set.faces)
     delete(set.resolved)
     free(set)
+
+    // free shared data that happen to be across faces
+    _curves_destroy()
+    _msdf_destroy()
+    _robin_destroy()
+    _color_tables_destroy_all()
+    _color_bitmaps_destroy_all()
 }
 
 // Seed an empty set from the platform's default UI face.

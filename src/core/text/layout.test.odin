@@ -16,12 +16,34 @@ _mk :: proc(specs: []_Spec) -> Shaped_Text {
     words := make([]Word, len(specs), context.temp_allocator)
     for s, i in specs {
         words[i] = Word {
-            width        = s.w,
-            space_before = s.space_before,
-            break_before = s.break_before,
+            width                  = s.w,
+            space_before           = s.space_before,
+            break_before           = s.break_before,
+            preferred_break_before = s.break_before,
         }
     }
     return Shaped_Text{words = words, space_advance = 1}
+}
+
+@(test)
+test_prefers_phrase_boundary_then_falls_back_to_legal :: proc(t: ^testing.T) {
+    st := _mk({
+        {1, false, false},
+        {1, false, true},
+        {1, false, true},
+        {1, false, true},
+        {1, false, true},
+        {1, false, true},
+    })
+    for &word in st.words do word.preferred_break_before = false
+    st.words[3].preferred_break_before = true
+    lines := break_lines(&st, 5, context.temp_allocator)
+    testing.expect_value(t, lines[0].end, 3)
+
+    // If no phrase boundary fits, legal character wrapping remains available.
+    st.words[3].preferred_break_before = false
+    lines = break_lines(&st, 5, context.temp_allocator)
+    testing.expect_value(t, lines[0].end, 5)
 }
 
 // A word that may not start a line must pull back to the previous opportunity
@@ -108,12 +130,12 @@ test_no_line_exceeds_max_width :: proc(t: ^testing.T) {
                 actual += st.words[k].width
             }
             testing.expectf(t, abs(actual - l.width) < 0.001,
-				"max_w=%v line %v..%v reported width %v but measured %v",
-				max_w, l.start, l.end, l.width, actual)
+                "max_w=%v line %v..%v reported width %v but measured %v",
+            max_w, l.start, l.end, l.width, actual)
             if l.end - l.start > 1 {
                 testing.expectf(t, actual <= max_w + 0.001,
-					"max_w=%v line %v..%v overflows at width %v",
-					max_w, l.start, l.end, actual)
+                    "max_w=%v line %v..%v overflows at width %v",
+                max_w, l.start, l.end, actual)
             }
         }
         testing.expect_value(t, covered, len(st.words))

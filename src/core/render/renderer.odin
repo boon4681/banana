@@ -3,12 +3,26 @@ package render
 import "src:core/common"
 import "base:runtime"
 
-Vertex :: struct {
-    pos:   [2]f32,
-    uv:    [2]f32,
-    color: common.Color,
+when ODIN_OS == .JS {
+    Vertex :: struct {
+        pos:   [2]f32,
+        uv:    [2]f32,
+        color: common.Color,
+    }
+} else {
+    Vertex :: struct {
+        pos:   [2]f32,
+        uv:    [2]f32,
+        color: common.Color,
+        mode:  Vertex_Mode,
+    }
 }
 
+Vertex_Mode :: enum u32 {
+    Solid,
+    Texture,
+    MSDF,
+}
 
 // Vertex for the GPU glyph pipeline: `uv` is an em-space position and the curve fields window into the quadratic
 // bézier store passed to draw_glyphs.
@@ -34,7 +48,9 @@ Mesh :: struct {
 }
 
 Renderer :: struct #all_or_none {
-    state_size: proc() -> int,
+    create_state:     proc(allocator: runtime.Allocator) -> rawptr,
+    free_state:       proc(state: rawptr, allocator: runtime.Allocator),
+    get_active_state: proc()->rawptr,
 
     init: proc(
 		state:     rawptr,
@@ -44,9 +60,9 @@ Renderer :: struct #all_or_none {
 		options:   Init_Options,
 		allocator: runtime.Allocator,
     ),
-    shutdown:           proc(),
+    shutdown:         proc(),
     set_active_state: proc(state: rawptr),
-    make_current:       proc(), // Call after set_active_state when switching windows.
+    make_current:     proc(), // Call after set_active_state when switching windows.
 
     clear:   proc(target: Render_Target, color: common.Color),
     present: proc(),
@@ -101,6 +117,20 @@ Renderer :: struct #all_or_none {
         scissor:          Maybe(common.Rect),
     ),
 
+    // Experimental ROBIN path. The data buffer begins with per-cell winding
+    // records and points to duplicated local quadratic triples.
+    draw_robin_mesh: proc(
+        target:           Render_Target,
+        mesh:             ^Glyph_Mesh,
+        vertices:         []Glyph_Vertex,
+        indices:          []u32,
+        geometry_version: u64,
+        transform:        common.Mat3x3,
+        data:             [][2]f32,
+        data_version:     u64,
+        scissor:          Maybe(common.Rect),
+    ),
+
     draw_msdf_mesh: proc(
         target:           Render_Target,
         mesh:             ^Glyph_Mesh,
@@ -141,33 +171,33 @@ Renderer :: struct #all_or_none {
 CONFIG_RENDERER_NAME :: #config(banana_RENDER_BACKEND, "")
 
 when ODIN_OS == .Windows {
-	DEFAULT_RENDERER_NAME :: "gl"
-	AVAILABLE_RENDERERS   :: "d3d11, gl, nil"
+    DEFAULT_RENDERER_NAME :: "gl"
+    AVAILABLE_RENDERERS   :: "d3d11, gl, nil"
 } else when ODIN_OS == .Linux || ODIN_OS == .Darwin {
-	DEFAULT_RENDERER_NAME :: "gl"
-	AVAILABLE_RENDERERS   :: "gl, nil"
+    DEFAULT_RENDERER_NAME :: "gl"
+    AVAILABLE_RENDERERS   :: "gl, nil"
 } else when ODIN_OS == .JS {
-	DEFAULT_RENDERER_NAME :: "webgl"
-	AVAILABLE_RENDERERS   :: "webgl, nil"
+    DEFAULT_RENDERER_NAME :: "webgl"
+    AVAILABLE_RENDERERS   :: "webgl, nil"
 } else {
-	DEFAULT_RENDERER_NAME :: "nil"
-	AVAILABLE_RENDERERS   :: "nil"
+    DEFAULT_RENDERER_NAME :: "nil"
+    AVAILABLE_RENDERERS   :: "nil"
 }
 
 when CONFIG_RENDERER_NAME == "" {
-	RENDERER_NAME :: DEFAULT_RENDERER_NAME
+    RENDERER_NAME :: DEFAULT_RENDERER_NAME
 } else {
-	RENDERER_NAME :: CONFIG_RENDERER_NAME
+    RENDERER_NAME :: CONFIG_RENDERER_NAME
 }
 
 when RENDERER_NAME == "nil" {
-	RENDERER :: RENDERER_NIL
+    RENDERER :: RENDERER_NIL
 } else when RENDERER_NAME == "d3d11" {
-	#panic("banana: 'd3d11' render backend not implemented yet. Set banana_RENDER_BACKEND=nil for a headless build.")
+    #panic("banana: 'd3d11' render backend not implemented yet. Set banana_RENDER_BACKEND=nil for a headless build.")
 } else when RENDERER_NAME == "gl" {
-	RENDERER :: RENDERER_GL
+    RENDERER :: RENDERER_GL
 } else when RENDERER_NAME == "webgl" {
-	RENDERER :: RENDERER_WEBGL
+    RENDERER :: RENDERER_WEBGL
 } else {
-	#panic("'" + RENDERER_NAME + "' is not a valid banana_RENDER_BACKEND on " + ODIN_OS_STRING + ". Available: " + AVAILABLE_RENDERERS)
+    #panic("'" + RENDERER_NAME + "' is not a valid banana_RENDER_BACKEND on " + ODIN_OS_STRING + ". Available: " + AVAILABLE_RENDERERS)
 }
