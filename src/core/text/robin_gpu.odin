@@ -26,9 +26,9 @@ _Robin_Key :: struct {
     embold: u16,
 }
 
-@(private="file") _robin_glyphs: map[_Robin_Key]Robin_Glyph
-@(private="file") _robin_gpu_data: [dynamic][2]f32
-@(private="file") _robin_gpu_version: u64
+@(private="file", thread_local) _robin_glyphs: map[_Robin_Key]Robin_Glyph
+@(private="file", thread_local) _robin_gpu_data: [dynamic][2]f32
+@(private="file", thread_local) _robin_gpu_version: u64
 
 robin_render_data :: proc() -> ([][2]f32, u64) {
     return _robin_gpu_data[:], _robin_gpu_version

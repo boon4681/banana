@@ -81,7 +81,7 @@ collect :: proc(
     allocator: runtime.Allocator
 ) {
     for c in n.children {
-        if c.freed do continue
+        if c.freed || node.is_hidden(c) do continue
         if is_stacking_context(c) {
             p := Pending{node = c, clips = slice.clone(clip_stack[:], allocator)}
             append(c.z_index < 0 ? neg : pos, p)

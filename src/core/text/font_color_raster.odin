@@ -207,7 +207,7 @@ _Bitmap_Key :: struct {
     size: u16,
 }
 
-@(private = "file")
+@(private = "file", thread_local)
 _bitmaps: map[_Bitmap_Key]Color_Bitmap
 
 COLOR_BITMAP_MAX_PX :: 160

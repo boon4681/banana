@@ -31,34 +31,43 @@ _MSDF_Key :: struct {
     embold: u16,
 }
 
-@(private="package")
+@(private="package", thread_local)
 _msdf_pixels: []u8
 
-@(private="package")
-_msdf_size: int = MSDF_ATLAS_SIZE
+@(private="package", thread_local)
+_msdf_size: int
 
-@(private="package")
+@(private="package", thread_local)
 _msdf_glyphs: map[_MSDF_Key]MSDF_Glyph
 
-@(private="package")
+@(private="package", thread_local)
 _msdf_x: int
 
-@(private="package")
+@(private="package", thread_local)
 _msdf_y: int
 
-@(private="package")
+@(private="package", thread_local)
 _msdf_row_h: int
 
-@(private="package")
+@(private="package", thread_local)
 _msdf_version: u64
 
-@(private="package")
-_msdf_dirty_lo: int = MSDF_ATLAS_SIZE
+@(private="package", thread_local)
+_msdf_dirty_lo: int
 
-@(private="package")
+@(private="package", thread_local)
 _msdf_dirty_hi: int
 
+// Odin forbids initializers on thread-local storage.
+@(private="package")
+_msdf_thread_init :: proc() {
+    if _msdf_size != 0 do return
+    _msdf_size = MSDF_ATLAS_SIZE
+    _msdf_dirty_lo = MSDF_ATLAS_SIZE
+}
+
 msdf_atlas_data :: proc() -> (pixels: []u8, width, height: int, version: u64) {
+    _msdf_thread_init()
     return _msdf_pixels, _msdf_size, _msdf_size, _msdf_version
 }
 
@@ -82,12 +91,14 @@ _msdf_destroy :: proc() {
 }
 
 msdf_atlas_dirty_rows :: proc() -> (lo, hi: int) {
+    _msdf_thread_init()
     return _msdf_dirty_lo, _msdf_dirty_hi
 }
 
 // Call once per frame, after drawing, so rows stay dirty for every consumer
 // that draws this frame rather than only the first one.
 msdf_atlas_clear_dirty :: proc() {
+    _msdf_thread_init()
     _msdf_dirty_lo = _msdf_size
     _msdf_dirty_hi = 0
 }
@@ -183,6 +194,7 @@ _thinnest_contour :: proc(g: Glyph) -> f32 {
 
 msdf_glyph :: proc(face: ^Face, gid: u32, embold: f32 = 0) -> (MSDF_Glyph, bool) {
     if face == nil do return {}, false
+    _msdf_thread_init()
     if _msdf_glyphs == nil do _msdf_glyphs = make(map[_MSDF_Key]MSDF_Glyph)
     key := _MSDF_Key{face, gid, embolden_steps(embold)}
     if cached, ok := _msdf_glyphs[key]; ok do return cached, true

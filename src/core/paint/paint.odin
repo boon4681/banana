@@ -46,7 +46,7 @@ draw_ctx :: proc(p: painter.Painter, ctx: ^Stacking_Context) {
 @(private="file")
 draw_flow :: proc(p: painter.Painter, n: ^Node) {
     for c in n.children {
-        if c.freed || is_stacking_context(c) do continue
+        if c.freed || node.is_hidden(c) || is_stacking_context(c) do continue
         if c.draw != nil {
             draw_start := common.profile_begin(.Node_Draw)
             c->draw()

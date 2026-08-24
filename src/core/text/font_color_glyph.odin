@@ -34,7 +34,7 @@ _Color_Table :: struct {
     layer_list: int, // offset of LayerList
 }
 
-@(private = "file")
+@(private = "file", thread_local)
 _color_tables: map[^Face]_Color_Table
 
 @(private = "file")

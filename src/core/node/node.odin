@@ -30,15 +30,15 @@ Hook_Entry :: struct {
 
 // Yoga calls back in with no Odin context.
 // Sneaky way to fix memory leak by odin cuz memory got free with different allocator.
-@(private="file")
+@(private="file", thread_local)
 _measure_ctx: runtime.Context
-@(private="file")
+@(private="file", thread_local)
 _measure_ctx_set: bool
 
-ClipMode        :: painter.ClipMode
-UNDEFINED       :: YG.UNDEFINED
-INFINITY        :: YG.INFINITY
-NEG_INFINITY    :: YG.NEG_INFINITY
+ClipMode     :: painter.ClipMode
+UNDEFINED    :: YG.UNDEFINED
+INFINITY     :: YG.INFINITY
+NEG_INFINITY :: YG.NEG_INFINITY
 
 Node_Error :: enum {
     None,
@@ -53,6 +53,7 @@ Node_Error_Map := [Node_Error]string{
 BaseNode :: struct {
     raw:      YG.NodeRef,
     window:   rawptr,
+    type_id:  typeid,
     key:      string,
     parent:   ^BaseNode,
     children: [dynamic]^BaseNode,
@@ -119,6 +120,10 @@ Node :: struct {
     style: proc(self: ^Node) -> ^Style
 }
 
+is_hidden :: proc(n: ^BaseNode) -> bool {
+    return n == nil || YG.NodeStyleGetDisplay(n.raw) == .None
+}
+
 RectType :: enum {
 	Border,  // the laid-out frame (left/top/width/height as Yoga reports)
 	Padding, // border box minus border
@@ -148,8 +153,9 @@ _free_base_style :: proc(self: ^Node) {
 
 // Initializes an embedded Node in place so widget structs
 // can extend Node without re-implementing the method table wiring.
-Init :: proc(n: ^Node, key: Maybe(string) = nil) {
+Init :: proc(n: ^$T, key: Maybe(string) = nil) {
     n.raw = YG.NodeNew()
+    n.type_id = T
     if key, ok := key.?; ok do n.key = key
 
     n.transform = common.IDENTITY_TRANSFORM
@@ -201,10 +207,10 @@ _capture_measure_context :: proc() {
 
 @(private="file")
 _measure_trampoline :: proc "c" (
-	node: YG.NodeRef,
-	width: f32,
-	width_mode: YG.MeasureMode,
-	height: f32,
+	node:        YG.NodeRef,
+	width:       f32,
+	width_mode:  YG.MeasureMode,
+	height:      f32,
 	height_mode: YG.MeasureMode,
 ) -> YG.Size {
     context = _measure_ctx if _measure_ctx_set else runtime.default_context()
@@ -238,6 +244,11 @@ _node_insert :: proc(self: ^BaseNode, k: ^BaseNode, index: int) -> ^BaseNode {
         if k._internal_propagate_awake == nil {
             panic("EXIT ERROR NODE IS NOT SETUP PROPERLY")
         }
+        k->_internal_propagate_awake()
+    }
+    if self.window != nil && self._internal_propagate_awake != nil && !k.awaken {
+        k.window = self.window
+        k._internal_propagate_awake = self._internal_propagate_awake
         k->_internal_propagate_awake()
     }
     return self
@@ -324,7 +335,7 @@ _node_get_rect :: proc(self: ^Node, which: RectType = .Border) -> common.Rect {
 }
 
 @(private="file")
-_queue_free :: proc(self: ^BaseNode) -> Node_Error{
+_queue_free :: proc(self: ^BaseNode) -> Node_Error {
     return Node_Error.NODE_PANIC_NOT_AWAKE
 }
 

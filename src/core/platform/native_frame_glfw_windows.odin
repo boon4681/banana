@@ -43,6 +43,14 @@ MA_NOACTIVATE :: win32.LRESULT(3)
 TOP_MOST_TIMER_MS :: win32.UINT(100)
 
 @(private = "file", thread_local)
+_pointer_capture: bool
+
+// OS level mouse pointer capture
+set_pointer_capture :: proc(enabled: bool) {
+    _pointer_capture = enabled
+}
+
+@(private = "file", thread_local)
 _asserting_top_most: bool
 
 @(private = "file", thread_local)
@@ -164,7 +172,7 @@ sync_click_through :: proc(w: ^Window) {
     if win32.ScreenToClient(_frame.hwnd, &point) == win32.FALSE do return
 
     scale := w.scale if w.scale > 0 else 1
-    transparent := !_any_node_claims(w.root, f32(point.x) / scale, f32(point.y) / scale)
+    transparent := !_pointer_capture && !_any_node_claims(w.root, f32(point.x) / scale, f32(point.y) / scale)
 
     if transparent == _frame.click_through_active do return
     _frame.click_through_active = transparent
@@ -285,6 +293,7 @@ _constrain_maximized_client :: proc "contextless" (hwnd: win32.HWND, lparam: win
 
 @(private = "file")
 _hit_test :: proc(hwnd: win32.HWND, lparam: win32.LPARAM) -> win32.LRESULT {
+    if _pointer_capture do return win32.HTCLIENT
     x := i32(cast(i16)(u32(lparam) & 0xffff))
     y := i32(cast(i16)((u32(lparam) >> 16) & 0xffff))
 

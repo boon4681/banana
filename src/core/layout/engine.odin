@@ -13,13 +13,13 @@ Deferred :: struct {
     state:    rawptr
 }
 
-@(private)
+@(private, thread_local)
 _deferred: [dynamic]Deferred
 
-@(private)
+@(private, thread_local)
 _pending_free: [dynamic]^Node
 
-@(private)
+@(private, thread_local)
 _last_avail: map[^Node][2]f32
 
 Defer :: proc(callback: proc(state: rawptr), state: rawptr = nil) {

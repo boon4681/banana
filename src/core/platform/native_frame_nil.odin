@@ -22,6 +22,9 @@ enable_native_frame :: proc(w: ^Window) -> ^Frame {
 
 sync_click_through :: proc(w: ^Window) {}
 
+// OS level mouse pointer capture
+set_pointer_capture :: proc(enabled: bool) {}
+
 @(private = "file")
 frame_vtable := Frame_VTable {
     set_title_bar = proc(self: ^Frame, bar: Title_Bar) -> ^Frame {

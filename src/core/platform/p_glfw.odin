@@ -1,6 +1,7 @@
 #+build !js
 package platform
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:c"
 import "core:strings"
@@ -29,7 +30,7 @@ _live_windows: int // counter for internal
 
 // "c" create a memory leak cuz the heap context is not the same
 // so odin free the wrong memory create segfault or memory corrupt
-@(private = "file")
+@(private = "file", thread_local)
 _callback_context: runtime.Context
 
 // MakeContextCurrent is a expensive, so this is a cache if the binding to the same resource.
@@ -77,7 +78,7 @@ _init :: proc(
     glfw.WindowHint(glfw.VISIBLE, 0)
     _active.handle = glfw.CreateWindow(i32(opts.width), i32(opts.height), opts.title, nil, nil)
     if _active.handle == nil do panic("window glfw: CreateWindow failed")
-    _live_windows += 1
+    intrinsics.atomic_add(&_live_windows, 1)
 
     return render.Render_Interface {
         state            = cast(rawptr)(_active.handle),
@@ -106,8 +107,7 @@ _shutdown :: proc() {
     _current_context = nil
     glfw.DestroyWindow(_active.handle)
     _active.handle = nil
-    _live_windows -= 1
-    if _live_windows == 0 do glfw.Terminate()
+    if intrinsics.atomic_sub(&_live_windows, 1) == 1 do glfw.Terminate()
 }
 
 @(private = "file")

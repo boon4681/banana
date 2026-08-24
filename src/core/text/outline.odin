@@ -27,9 +27,9 @@ embolden_steps :: proc(em: f32) -> u16 {
     return u16(em / EMBOLDEN_QUANTUM + 0.5)
 }
 
-@(private = "file") _curves: [dynamic][2]f32
-@(private = "file") _contour_ends: [dynamic]u32
-@(private = "file") _version: u64
+@(private = "file", thread_local) _curves: [dynamic][2]f32
+@(private = "file", thread_local) _contour_ends: [dynamic]u32
+@(private = "file", thread_local) _version: u64
 
 curve_data :: proc() -> ([][2]f32, u64) {
     return _curves[:], _version
