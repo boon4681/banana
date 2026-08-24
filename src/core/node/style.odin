@@ -306,6 +306,7 @@ Init_Style :: proc(n: ^Node) {
     style := cast(^Style)n._internal_style
     style.owner = n
     style._internal_vt = &style_vtable
+    style.pointer_events = .Inherit
 }
 
 Set_Style :: proc(n: ^Node, style: ^$T) where intrinsics.type_is_subtype_of(T, Style)
