@@ -78,12 +78,34 @@ _set_value :: proc(n: YG.NodeRef, v: f32, u: unit, pt: YG.Style_Set_Proc, pct: Y
 
 @(private="file")
 _set_edge :: proc(n: YG.NodeRef, e: Edge, v: f32, u: unit, pt: YG.Style_Set_Edge_Proc, pct: YG.Style_Set_Edge_Proc, aut: YG.Style_Set_Edge_Auto_Proc = nil) {
+    _clear_subsumed_edges(n, e, pt)
     #partial switch u {
     case .Point:   pt(n, e, v)
     case .Percent: pct(n, e, v)
     case .Auto:    if aut != nil do aut(n, e)
     }
 }
+
+// Yoga resolves an edge as specific → axis → .All and .All is the lowest priority fallback.
+// so i need to clear it first before apply the value.
+@(private="file")
+_clear_subsumed_edges :: proc(n: YG.NodeRef, e: Edge, pt: YG.Style_Set_Edge_Proc) {
+    all := [?]Edge{.Left, .Top, .Right, .Bottom, .Start, .End, .Horizontal, .Vertical}
+    horizontal := [?]Edge{.Left, .Right, .Start, .End}
+    vertical := [?]Edge{.Top, .Bottom}
+
+    subsumed: []Edge
+    #partial switch e {
+    case .All:        subsumed = all[:]
+    case .Horizontal: subsumed = horizontal[:]
+    case .Vertical:   subsumed = vertical[:]
+    case:             return
+    }
+    for c in subsumed do pt(n, c, NAN)
+}
+
+@(private="file")
+NAN :: f32(0h7fc0_0000)
 
 // Yoga-backed style implementation. Every proc reads/writes the Yoga node
 // directly; `Style.v` is reserved for non-yoga style values only.
@@ -234,9 +256,9 @@ style_vtable := Style_VTable{
     set_border_bottom = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Bottom, v); return self },
     set_border_start  = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Start, v); return self },
     set_border_end    = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .End, v); return self },
-    set_border_x      = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Horizontal, v); return self },
-    set_border_y      = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .Vertical, v); return self },
-    set_border_all    = proc(self: ^Style, v: f32) -> ^Style { YG.NodeStyleSetBorder(self.owner.raw, .All, v); return self },
+    set_border_x      = proc(self: ^Style, v: f32) -> ^Style { _clear_subsumed_edges(self.owner.raw, .Horizontal, YG.NodeStyleSetBorder); YG.NodeStyleSetBorder(self.owner.raw, .Horizontal, v); return self },
+    set_border_y      = proc(self: ^Style, v: f32) -> ^Style { _clear_subsumed_edges(self.owner.raw, .Vertical, YG.NodeStyleSetBorder); YG.NodeStyleSetBorder(self.owner.raw, .Vertical, v); return self },
+    set_border_all    = proc(self: ^Style, v: f32) -> ^Style { _clear_subsumed_edges(self.owner.raw, .All, YG.NodeStyleSetBorder); YG.NodeStyleSetBorder(self.owner.raw, .All, v); return self },
     set_gap_column    = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_value_gutter(self.owner.raw, .Column, v, u); return self },
     set_gap_row       = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_value_gutter(self.owner.raw, .Row, v, u); return self },
     set_gap_all       = proc(self: ^Style, v: f32, u := px) -> ^Style { _set_value_gutter(self.owner.raw, .All, v, u); return self },
