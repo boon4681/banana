@@ -288,10 +288,10 @@ _blend :: proc(mode: Blend_Mode) {
         gl.Disable(gl.BLEND)
     case .Alpha:
         gl.Enable(gl.BLEND)
-        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+        _blend_over()
     case .Additive:
         gl.Enable(gl.BLEND)
-        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE)
+        _blend_additive()
     }
 }
 
@@ -796,4 +796,14 @@ RENDERER_WEBGL :: Renderer {
     stencil_push_clip     = _stencil_push,
     stencil_use_clip      = _stencil_use,
     stencil_pop_clip      = _stencil_pop,
+}
+
+@(private = "file")
+_blend_over :: proc() {
+    gl.BlendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+}
+
+@(private = "file")
+_blend_additive :: proc() {
+    gl.BlendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 }

@@ -302,7 +302,7 @@ _init :: proc(
     gl.BindVertexArray(_state.vao)
 
     gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    _blend_over()
     gl.Enable(gl.STENCIL_TEST)
     if options.msaa_samples > 1 do gl.Enable(gl.MULTISAMPLE)
 }
@@ -424,8 +424,8 @@ _draw :: proc(
 
     switch blend {
     case .Opaque:   gl.Disable(gl.BLEND)
-    case .Alpha:    gl.Enable(gl.BLEND); gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-    case .Additive: gl.Enable(gl.BLEND); gl.BlendFunc(gl.SRC_ALPHA, gl.ONE)
+    case .Alpha:    gl.Enable(gl.BLEND); _blend_over()
+    case .Additive: gl.Enable(gl.BLEND); _blend_additive()
     }
 
     gl.UseProgram(_state.program)
@@ -525,10 +525,10 @@ _draw_mesh :: proc(
         gl.Disable(gl.BLEND)
     case .Alpha:
         gl.Enable(gl.BLEND)
-        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+        _blend_over()
     case .Additive:
         gl.Enable(gl.BLEND)
-        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE)
+        _blend_additive()
     }
 
     gl.UseProgram(_state.program)
@@ -576,7 +576,7 @@ _draw_glyphs :: proc(
     }
 
     gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    _blend_over()
 
     if _state.curves_version != curves_version && len(curves) > 0 {
         gl.BindBuffer(gl.TEXTURE_BUFFER, _state.curve_buf)
@@ -666,7 +666,7 @@ _draw_glyph_mesh :: proc(
         gl.Disable(gl.SCISSOR_TEST)
     }
     gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    _blend_over()
 
     if _state.curves_version != curves_version && len(curves) > 0 {
         gl.BindBuffer(gl.TEXTURE_BUFFER, _state.curve_buf)
@@ -751,7 +751,7 @@ _draw_robin_mesh :: proc(
         gl.Disable(gl.SCISSOR_TEST)
     }
     gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    _blend_over()
 
     if _state.robin_data_version != data_version && len(data) > 0 {
         required_rows := (len(data) + GL_ROBIN_ATLAS_WIDTH - 1) / GL_ROBIN_ATLAS_WIDTH
@@ -859,7 +859,7 @@ _draw_msdf_mesh :: proc(
         gl.Disable(gl.SCISSOR_TEST)
     }
     gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    _blend_over()
     gl.UseProgram(_state.msdf_program)
     gl.Uniform2f(_state.msdf_loc_resolution, f32(target_w), f32(target_h))
     matrix_values := linalg.matrix_flatten(transform)
@@ -1162,4 +1162,14 @@ RENDERER_GL :: Renderer {
     stencil_push_clip     = _stencil_push_clip,
     stencil_use_clip      = _stencil_use_clip,
     stencil_pop_clip      = _stencil_pop_clip,
+}
+
+@(private = "file")
+_blend_over :: proc() {
+    gl.BlendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+}
+
+@(private = "file")
+_blend_additive :: proc() {
+    gl.BlendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 }
