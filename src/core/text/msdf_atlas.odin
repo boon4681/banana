@@ -24,42 +24,42 @@ MSDF_Glyph :: struct {
     atlas: [4]f32,
 }
 
-@(private="package")
+@(private)
 _MSDF_Key :: struct {
     face:   ^Face,
     gid:    u32,
     embold: u16,
 }
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_pixels: []u8
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_size: int
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_glyphs: map[_MSDF_Key]MSDF_Glyph
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_x: int
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_y: int
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_row_h: int
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_version: u64
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_dirty_lo: int
 
-@(private="package", thread_local)
+@(private, thread_local)
 _msdf_dirty_hi: int
 
 // Odin forbids initializers on thread-local storage.
-@(private="package")
+@(private)
 _msdf_thread_init :: proc() {
     if _msdf_size != 0 do return
     _msdf_size = MSDF_ATLAS_SIZE
@@ -78,7 +78,7 @@ msdf_glyph_cached :: proc(face: ^Face, gid: u32, embold: f32 = 0) -> (MSDF_Glyph
 }
 
 // The atlas packs glyphs from every face into one shared sheet, so it is only released once the whole set goes away.
-@(private="package")
+@(private)
 _msdf_destroy :: proc() {
     delete(_msdf_pixels)
     _msdf_pixels = nil
@@ -109,7 +109,7 @@ _mark_dirty :: proc(lo, hi: int) {
     _msdf_dirty_hi = max(_msdf_dirty_hi, min(hi, _msdf_size))
 }
 
-@(private = "package")
+@(private)
 _next_atlas_size :: proc(current, required, maximum: int) -> (int, bool) {
     if current <= 0 || current >= maximum || required > maximum do return current, false
     next := current
@@ -120,7 +120,7 @@ _next_atlas_size :: proc(current, required, maximum: int) -> (int, bool) {
     return next, true
 }
 
-@(private = "package")
+@(private)
 _copy_atlas_rows :: proc(dst: []u8, dst_size: int, src: []u8, src_size: int) {
     old_row := src_size * 4
     new_row := dst_size * 4

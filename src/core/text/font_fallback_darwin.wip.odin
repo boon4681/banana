@@ -56,7 +56,7 @@ _gostr :: proc(s: CFRef, allocator := context.allocator) -> string {
     return strings.clone(string(cstring(raw_data(buf))), allocator)
 }
 
-@(private = "package")
+@(private)
 _platform_fallback :: proc(set: ^Font_Set, r: rune, script: u32) -> ^Face {
     b, n := utf8.encode_rune(r)
     str := CFStringCreateWithBytes(nil, raw_data(b[:]), CFIndex(n), kCFStringEncodingUTF8, false)

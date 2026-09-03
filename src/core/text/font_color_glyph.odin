@@ -479,7 +479,7 @@ paint_layers :: proc(
     return out[:]
 }
 
-@(private = "package")
+@(private)
 _color_tables_destroy :: proc(f: ^Face) {
     if t, ok := &_color_tables[f]; ok {
         delete(t.palette)
@@ -489,7 +489,7 @@ _color_tables_destroy :: proc(f: ^Face) {
     }
 }
 
-@(private = "package")
+@(private)
 _color_tables_destroy_all :: proc() {
     delete(_color_tables)
     _color_tables = nil

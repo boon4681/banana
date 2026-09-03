@@ -238,7 +238,7 @@ color_bitmap_cached :: proc(f: ^Face, gid: u32, px_per_em: f32) -> (Color_Bitmap
     return bm, true
 }
 
-@(private = "package")
+@(private)
 _color_bitmaps_destroy :: proc(f: ^Face) {
     doomed := make([dynamic]_Bitmap_Key, 0, len(_bitmaps), context.temp_allocator)
     for key in _bitmaps {
@@ -255,7 +255,7 @@ _color_bitmaps_destroy :: proc(f: ^Face) {
     }
 }
 
-@(private = "package")
+@(private)
 _color_bitmaps_destroy_all :: proc() {
     delete(_bitmaps)
     _bitmaps = nil

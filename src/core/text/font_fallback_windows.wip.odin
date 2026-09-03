@@ -237,7 +237,7 @@ _ensure_fallback :: proc() -> rawptr {
     return _fallback
 }
 
-@(private = "package")
+@(private)
 _platform_fallback :: proc(set: ^Font_Set, r: rune, script: u32) -> ^Face {
     fb := _ensure_fallback()
     if fb == nil do return nil

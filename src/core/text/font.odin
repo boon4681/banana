@@ -284,7 +284,7 @@ _match_weight :: proc(faces: []^Face, want: FontWeight) -> ^Face {
     return best
 }
 
-@(private = "package")
+@(private)
 _resolve_weight :: proc(set: ^Font_Set, base: ^Face, want: FontWeight) -> (face: ^Face, extra_bold: f32) {
     group := make([dynamic]^Face, context.temp_allocator)
     for f in set.faces {
@@ -350,7 +350,7 @@ set_destroy :: proc(set: ^Font_Set) {
 }
 
 // Seed an empty set from the platform's default UI face.
-@(private = "package")
+@(private)
 _ensure_primary :: proc(set: ^Font_Set) -> ^Face {
     if set == nil do return nil
     if len(set.faces) > 0 do return set.faces[0]
@@ -358,7 +358,7 @@ _ensure_primary :: proc(set: ^Font_Set) -> ^Face {
 }
 
 // Cache platform faces in the fallback chain.
-@(private = "package")
+@(private)
 _fallback_lookup :: proc(set: ^Font_Set, r: rune, script: u32) -> ^Face {
     key := Fallback_Key{r, script}
     if f, ok := set.resolved[key]; ok do return f

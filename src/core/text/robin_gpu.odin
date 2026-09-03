@@ -36,7 +36,7 @@ robin_render_data :: proc() -> ([][2]f32, u64) {
 
 // Glyph entries are keyed by face, but the packed cell/curve buffer is shared across every face,
 // so this only runs once the whole set is going away.
-@(private="package")
+@(private)
 _robin_destroy :: proc() {
     delete(_robin_glyphs)
     _robin_glyphs = nil

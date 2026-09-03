@@ -64,7 +64,7 @@ line_visual_order :: proc(st: ^Shaped_Text, l: Line, order: []int) {
 
 // UAX #9 rule L2: for each level from the highest down to the lowest odd level, reverse every maximal subsequence at or above that level.
 // https://www.unicode.org/reports/tr9/tr9-9.html
-@(private = "package")
+@(private)
 _bidi_reorder :: proc(levels: []SB.Level, order: []int) {
     n := len(levels)
     for i in 0 ..< n do order[i] = i

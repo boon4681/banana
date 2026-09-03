@@ -63,7 +63,7 @@ _ensure_config :: proc() -> bool {
     return true
 }
 
-@(private = "package")
+@(private)
 _platform_fallback :: proc(set: ^Font_Set, r: rune, script: u32) -> ^Face {
     if !_ensure_config() do return nil
 

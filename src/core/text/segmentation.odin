@@ -2,7 +2,7 @@ package text
 
 // Select a boundary-analysis locale when the caller did not provide one.
 // Han-only text is inherently ambiguous, so it follows set_han_language().
-@(private = "package")
+@(private)
 _break_language :: proc(runes: []rune, requested: string) -> string {
     if requested != "" do return requested
     has_han := false

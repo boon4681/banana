@@ -37,7 +37,7 @@ curve_data :: proc() -> ([][2]f32, u64) {
 
 // Glyph structs index into these shared buffers, so they outlive any one face
 // and are only released when the whole set is torn down.
-@(private="package")
+@(private)
 _curves_destroy :: proc() {
     delete(_curves)
     _curves = nil
