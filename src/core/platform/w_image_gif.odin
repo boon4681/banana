@@ -260,7 +260,7 @@ _gif_decode_next :: proc(anim: ^GIF_Data) -> bool {
     return true
 }
 
-@(private="package")
+@(private)
 _is_gif :: proc(encoded: []u8) -> bool {
     return len(encoded) >= 6 &&
         encoded[0] == 'G' && encoded[1] == 'I' && encoded[2] == 'F' &&

@@ -26,6 +26,7 @@ Frame :: struct {
     always_top_most:      bool,
     click_through:        bool,
     click_through_active: bool,
+    self_hide:            bool,
 
     using _internal_vt: ^Frame_VTable,
 }
@@ -55,6 +56,14 @@ _asserting_top_most: bool
 
 @(private = "file", thread_local)
 _reassert_pending: bool
+
+begin_self_hide :: proc(w: ^Window) {
+    if _frame.active && _frame.window == w do _frame.self_hide = true
+}
+
+end_self_hide :: proc(w: ^Window) {
+    if _frame.active && _frame.window == w do _frame.self_hide = false
+}
 
 enable_native_frame :: proc(w: ^Window) -> ^Frame {
     if w == nil do return nil
@@ -164,6 +173,19 @@ frame_vtable := Frame_VTable {
     },
 }
 
+disable_native_frame :: proc(w: ^Window) {
+    if !_frame.active || (w != nil && _frame.window != w) do return
+    if _frame.hwnd != nil && _frame.previous != nil {
+        win32.SetWindowLongPtrW(
+            _frame.hwnd,
+            win32.GWLP_WNDPROC,
+            win32.LONG_PTR(uintptr(rawptr(_frame.previous))),
+        )
+    }
+    if w != nil do w.frame = nil
+    _frame = {}
+}
+
 sync_click_through :: proc(w: ^Window) {
     if !_frame.active || !_frame.click_through || _frame.window != w do return
 
@@ -232,8 +254,8 @@ _apply_frame_change :: proc(self: ^Frame) {
 
 @(private = "file")
 _frame_proc :: proc "system" (
-    hwnd: win32.HWND,
-    msg: win32.UINT,
+    hwnd:   win32.HWND,
+    msg:    win32.UINT,
     wparam: win32.WPARAM,
     lparam: win32.LPARAM,
 ) -> win32.LRESULT {
@@ -259,9 +281,18 @@ _frame_proc :: proc "system" (
         }
     case win32.WM_ACTIVATEAPP, win32.WM_SETTINGCHANGE:
         if _frame.always_top_most do _assert_top_most(hwnd)
+    case win32.WM_SYSCOMMAND:
+        if _frame.always_top_most && !_frame.self_hide {
+            if win32.UINT(wparam) & 0xFFF0 == win32.SC_MINIMIZE do return 0
+        }
     case win32.WM_WINDOWPOSCHANGING:
         if _frame.always_top_most && !_asserting_top_most {
             pos := cast(^win32.WINDOWPOS)(rawptr(uintptr(lparam)))
+            // windows "Show desktop" hides window so we ignore it; if top most is true
+            if !_frame.self_hide && pos.flags & win32.SWP_HIDEWINDOW != 0 {
+                pos.flags &~= win32.SWP_HIDEWINDOW
+                _reassert_pending = true
+            }
             if pos.flags & win32.SWP_NOZORDER == 0 {
                 pos.flags |= win32.SWP_NOZORDER
                 _reassert_pending = true
@@ -300,7 +331,8 @@ _hit_test :: proc(hwnd: win32.HWND, lparam: win32.LPARAM) -> win32.LRESULT {
     rect: win32.RECT
     win32.GetWindowRect(hwnd, &rect)
 
-    scale := _frame.window.scale if _frame.window != nil && _frame.window.scale > 0 else 1
+    w := _frame.window
+    scale := w.scale if w != nil && w.scale > 0 else 1
 
     if _frame.resize_border > 0 {
         border := max(i32(f32(_frame.resize_border) * scale), 1)
@@ -330,15 +362,15 @@ _hit_test :: proc(hwnd: win32.HWND, lparam: win32.LPARAM) -> win32.LRESULT {
     if _node_contains(_frame.title_bar.close_button, client_x, client_y) do return win32.HTCLIENT
     if _node_contains(_frame.title_bar.caption_node, client_x, client_y) {
         if _secondary_button_down() do return win32.HTCLIENT
-        if _active_window.input.hovered != nil {
-            ev := events.Mouse_Event{x = auto_cast x, y = auto_cast y, mods = _active_window.input.mods}
-            input.dispatch(_active_window.input.hovered, events.MOUSE_LEAVE_EVENT, &ev)
+        if w != nil && w.input.hovered != nil {
+            ev := events.Mouse_Event{x = auto_cast x, y = auto_cast y, mods = w.input.mods}
+            input.dispatch(w.input.hovered, events.MOUSE_LEAVE_EVENT, &ev)
         }
         return win32.HTCAPTION
     }
 
-    if _frame.click_through && _active_window != nil {
-        if !_any_node_claims(_active_window.root, client_x, client_y) {
+    if _frame.click_through && w != nil {
+        if !_any_node_claims(w.root, client_x, client_y) {
             return win32.HTTRANSPARENT
         }
     }

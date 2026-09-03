@@ -45,7 +45,7 @@ Window :: struct {
     queue:      [dynamic]EVENT,
 }
 
-@(private="package", thread_local)
+@(private, thread_local)
 _active_window: ^Window
 
 New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
@@ -166,6 +166,18 @@ make_current :: proc(w: ^Window) {
     render.RENDERER.make_current()
 }
 
+@(private)
+scoped_current :: proc(w: ^Window) -> (prev: ^Window) {
+    prev = _active_window
+    make_current(w)
+    return
+}
+
+@(private)
+restore_current :: proc(prev: ^Window) {
+    if prev != nil && prev != _active_window do make_current(prev)
+}
+
 @(private="file")
 sync_size :: proc(w: ^Window) {
     nw, nh := PLATFORM.poll_size()
@@ -186,7 +198,8 @@ sync_size :: proc(w: ^Window) {
 
 // Called by the platform during window resize
 refresh :: proc(w: ^Window) {
-    make_current(w)
+    prev := scoped_current(w)
+    defer restore_current(prev)
     sync_size(w)
     _emit_window(w, events.WINDOW_REFRESH_EVENT)
     if w.on_refresh != nil do w.on_refresh(w)
@@ -274,7 +287,9 @@ set_cursor :: proc(w: ^Window, shape: Cursor) {
 minimize :: proc(w: ^Window) {
     if w == nil do return
     PLATFORM.set_active_state(w.platform_state)
+    begin_self_hide(w)
     PLATFORM.minimize()
+    end_self_hide(w)
 }
 
 is_maximized :: proc(w: ^Window) -> bool {
@@ -291,7 +306,8 @@ toggle_maximize :: proc(w: ^Window) {
 
 free :: proc(w: ^Window) {
     if w == nil do return
-    make_current(w)
+    prev := scoped_current(w)
+    disable_native_frame(w)
     if w.root != nil do w.root->free()
     painter.shutdown(w.painter)
     for image in w.images do _free_image(image, w.allocator)
@@ -307,4 +323,11 @@ free :: proc(w: ^Window) {
     events.bus_destroy(&w.bus)
     eventloop.destroy(w.loop)
     runtime.mem_free(w)
+
+    if prev != w {
+        restore_current(prev)
+    } else {
+        _active_window = nil
+        input.set_context(nil)
+    }
 }

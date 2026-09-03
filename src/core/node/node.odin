@@ -13,13 +13,9 @@ MeasureMode     :: YG.MeasureMode
 MeasureCallback :: proc(self: ^Node, w: f32, w_mode: MeasureMode, h: f32, h_mode: MeasureMode) -> (out_w, out_h: f32)
 Hook_Callback   :: proc(self: ^BaseNode, ctx: rawptr)
 
-// Core lifecycle where ordered hooks can run.
 Hooks :: enum {
-    // Node and descendants are awake and component `on_awake` has run.
     After_Awake,
-    // Layout rectangles are current and component `on_layout` has run.
     After_Layout,
-    // Descendants are already freed; component `on_free` has not run yet.
     Before_Free,
 }
 
@@ -28,10 +24,9 @@ Hook_Entry :: struct {
     ctx:      rawptr,
 }
 
-// Yoga calls back in with no Odin context.
-// Sneaky way to fix memory leak by odin cuz memory got free with different allocator.
 @(private="file", thread_local)
 _measure_ctx: runtime.Context
+
 @(private="file", thread_local)
 _measure_ctx_set: bool
 
@@ -151,8 +146,6 @@ _free_base_style :: proc(self: ^Node) {
     free(self._internal_style)
 }
 
-// Initializes an embedded Node in place so widget structs
-// can extend Node without re-implementing the method table wiring.
 Init :: proc(n: ^$T, key: Maybe(string) = nil) {
     n.raw = YG.NodeNew()
     n.type_id = T
@@ -232,6 +225,7 @@ _node_add :: proc (self: ^BaseNode, kids: ..^BaseNode) -> ^BaseNode {
 _node_insert :: proc(self: ^BaseNode, k: ^BaseNode, index: int) -> ^BaseNode {
     if k == nil do fmt.println("warning: node inserted is nil")
     if self == nil || k == nil do return self
+    if k.parent != nil do panic("node is already mounted; remove it before inserting it elsewhere")
 
     at := index
     if at < 0 do at = 0
@@ -240,7 +234,7 @@ _node_insert :: proc(self: ^BaseNode, k: ^BaseNode, index: int) -> ^BaseNode {
     k.parent = self
     YG.NodeInsertChild(self.raw, k.raw, c.size_t(at))
     inject_at(&self.children, at, k)
-    if k.window != nil {
+    if k.window != nil && !k.awaken {
         if k._internal_propagate_awake == nil {
             panic("EXIT ERROR NODE IS NOT SETUP PROPERLY")
         }

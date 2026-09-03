@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:c"
 import "src:core/render"
 import stbi "vendor:stb/image"
-import gif "src:patches/std/image"
 
 Image_Error :: enum {
     None,
@@ -59,21 +58,24 @@ load_image_from_bytes :: proc(w: ^Window, encoded: []u8) -> (image: ^render.Imag
     return image, .None
 }
 
-// Releases an image's GPU texture, keeping its CPU pixels. Used when frame contents are overwritten in place and must be re-uploaded.
+// Releases GPU texture, keeping its CPU pixels.
+// Used when frame contents are overwritten in place and must be re-uploaded.
 free_image_texture :: proc(w: ^Window, image: ^render.Image) {
     if w == nil || image == nil do return
     if image.texture == render.INVALID_TEXTURE do return
-    make_current(w)
+    prev := scoped_current(w)
+    defer restore_current(prev)
     render.RENDERER.unload_image(image)
 }
 
-// Releases one image owned by this window. The window is made current before
-// releasing a resident GPU texture.
+// Releases one image owned by this window.
+// The window is made current before releasing a resident GPU texture.
 free_image :: proc(w: ^Window, image: ^render.Image) -> bool {
     if w == nil || image == nil do return false
     for owned, i in w.images {
         if owned != image do continue
-        make_current(w)
+        prev := scoped_current(w)
+        defer restore_current(prev)
         _free_image(image, w.allocator)
         unordered_remove(&w.images, i)
         return true
@@ -81,7 +83,7 @@ free_image :: proc(w: ^Window, image: ^render.Image) -> bool {
     return false
 }
 
-@(private="package")
+@(private)
 _free_image :: proc(image: ^render.Image, allocator: runtime.Allocator) {
     if image == nil do return
     if image.texture != render.INVALID_TEXTURE {

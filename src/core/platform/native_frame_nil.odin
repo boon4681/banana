@@ -3,8 +3,6 @@ package platform
 
 import "core:fmt"
 
-// Native-frame is Windows-only. The frame still exists elsewhere so the
-// setter chain compiles and runs; every setter is a no-op.
 Frame :: struct {
     window: ^Window,
     using _internal_vt: ^Frame_VTable,
@@ -20,10 +18,15 @@ enable_native_frame :: proc(w: ^Window) -> ^Frame {
     return &_frame
 }
 
-sync_click_through :: proc(w: ^Window) {}
+disable_native_frame :: proc(w: ^Window) {
+    if w != nil do w.frame = nil
+    _frame = {}
+}
 
-// OS level mouse pointer capture
+sync_click_through  :: proc(w: ^Window) {}
 set_pointer_capture :: proc(enabled: bool) {}
+begin_self_hide     :: proc(w: ^Window) {}
+end_self_hide       :: proc(w: ^Window) {}
 
 @(private = "file")
 frame_vtable := Frame_VTable {

@@ -25,7 +25,8 @@ capture :: proc(w: ^Window, path: string) -> bool {
     if w == nil {
         return false
     }
-    make_current(w)
+    prev := scoped_current(w)
+    defer restore_current(prev)
     data, width, height := render.RENDERER.read_pixels(render.INVALID_RENDER_TARGET, context.temp_allocator)
     if len(data) == 0 || width <= 0 || height <= 0 {
         return false
