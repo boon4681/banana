@@ -63,7 +63,7 @@ _active_reaction: Node_Id
 @(private="file", thread_local)
 _active_effect: Node_Id
 
-@(private="package", thread_local)
+@(private, thread_local)
 _untracked: bool
 
 @(private="file", thread_local)
@@ -80,6 +80,26 @@ _node :: proc(id: Node_Id) -> ^Reactive {
     n := _slots[id.slot]
     if n.gen != id.gen || !n.alive do return nil
     return n
+}
+
+// Ownership and tracking state saved by `detach`.
+Owner_Scope :: struct {
+    effect:    Node_Id,
+    reaction:  Node_Id,
+    untracked: bool,
+}
+
+detach :: proc() -> Owner_Scope {
+    saved := Owner_Scope{_active_effect, _active_reaction, _untracked}
+    _active_effect, _active_reaction = {}, {}
+    _untracked = false
+    return saved
+}
+
+attach :: proc(saved: Owner_Scope) {
+    _active_effect = saved.effect
+    _active_reaction = saved.reaction
+    _untracked = saved.untracked
 }
 
 @(private)

@@ -23,7 +23,7 @@ Flush_Stats :: struct {
     starved:   bool,
 }
 
-@(private="package", thread_local)
+@(private, thread_local)
 _queue: [dynamic]Node_Id
 
 @(private="file", thread_local)
