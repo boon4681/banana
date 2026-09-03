@@ -139,7 +139,8 @@ _unit_at :: proc(
         return _scope_unit(scope)
     }
 
-    pos := target.position_at(target, x, y)
+    lx, ly := hit_test.to_local(target, x, y)
+    pos := target.position_at(target, lx, ly)
     if granularity == .Character {
         point := Selection_Point{target, pos}
         return {point, point}, true
@@ -266,16 +267,17 @@ _nearest_selectable :: proc(root: ^Node, x, y: f32) -> ^Node {
 _nearest_selectable_walk :: proc(n: ^Node, x, y: f32, best: ^^Node, best_distance: ^f32) {
     if n == nil || n.freed do return
     if node.is_selectable(n) {
+        lx, ly := hit_test.to_local(n, x, y)
         dx, dy: f32
-        if x < n.rect.x {
-            dx = n.rect.x - x
-        } else if x > n.rect.x + n.rect.w {
-            dx = x - (n.rect.x + n.rect.w)
+        if lx < n.rect.x {
+            dx = n.rect.x - lx
+        } else if lx > n.rect.x + n.rect.w {
+            dx = lx - (n.rect.x + n.rect.w)
         }
-        if y < n.rect.y {
-            dy = n.rect.y - y
-        } else if y > n.rect.y + n.rect.h {
-            dy = y - (n.rect.y + n.rect.h)
+        if ly < n.rect.y {
+            dy = n.rect.y - ly
+        } else if ly > n.rect.y + n.rect.h {
+            dy = ly - (n.rect.y + n.rect.h)
         }
         distance := dx * dx + dy * dy
         if distance < best_distance^ {

@@ -21,6 +21,10 @@ on_key_down :: proc(im: ^Input_State, code: events.Key, key: rune, mods: events.
     _active_input_state = im
     im.mods = mods
 
+    ev := events.Key_Event{code = code, key = key, mods = mods, repeat = repeat}
+    s := dispatch(im.focused, events.KEY_DOWN_EVENT, &ev)
+    if s.cancelled do return
+
     if _accel(mods) && !repeat {
         #partial switch code {
         case .C:
@@ -29,9 +33,6 @@ on_key_down :: proc(im: ^Input_State, code: events.Key, key: rune, mods: events.
             if selection_select_all(im) do return
         }
     }
-
-    ev := events.Key_Event{code = code, key = key, mods = mods, repeat = repeat}
-    dispatch(im.focused, events.KEY_DOWN_EVENT, &ev)
 }
 
 on_key_up :: proc(im: ^Input_State, code: events.Key, key: rune, mods: events.Mods) {
