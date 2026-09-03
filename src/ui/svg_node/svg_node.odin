@@ -33,7 +33,7 @@ _SVG_Data :: struct {
 
 New :: proc(source: string = "", style: SVG_Style = {}, key: Maybe(string) = nil) -> (^SVG_Node, svg.Error) {
     n := new(SVG_Node)
-    node.Init(auto_cast(n), key)
+    node.Init(n, key)
     n.style = _get_style
     n.set_svg = _set_svg
     n.get_svg = _get_svg

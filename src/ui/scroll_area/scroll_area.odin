@@ -8,11 +8,12 @@ import "src:ui/box"
 import "src:ui/svg_node"
 import "core:time"
 
-BANANA_COMPONENT :: true
+BANANA_COMPONENT      :: true
+BANANA_COMPONENT_TYPE :: ^Scroll_Area
 
 @(private="file") ARROW_REPEAT_DELAY :: 0.25
-@(private="file") ARROW_REPEAT_RATE  :: 0.05
-@(private="file") ARROW_STEP         :: 40.0
+@(private="file") ARROW_REPEAT_RATE :: 0.05
+@(private="file") ARROW_STEP :: 40.0
 
 Scroll_Bar_Mode :: enum {
     Auto,
@@ -54,7 +55,10 @@ Scroll_Area :: struct {
 
     _v_track, _v_thumb: ^box.Box,
     _h_track, _h_thumb: ^box.Box,
-    _arrow_up, _arrow_down, _arrow_left, _arrow_right: _Arrow,
+    _arrow_up:          _Arrow,
+    _arrow_down:        _Arrow,
+    _arrow_left:        _Arrow,
+    _arrow_right:       _Arrow,
     _drag_axis:         _Axis,
     _drag_pointer:      f32,
     _drag_scroll:       f32,
@@ -87,7 +91,7 @@ _Axis :: enum {
 
 New :: proc(style: Scroll_Area_Style = {}, key: Maybe(string) = nil) -> ^Scroll_Area {
     n := new(Scroll_Area)
-    node.Init(auto_cast(n), key)
+    node.Init(n, key)
 
     st := style
     if st.scrollbar_size <= 0 do st.scrollbar_size = 15
@@ -125,10 +129,10 @@ New :: proc(style: Scroll_Area_Style = {}, key: Maybe(string) = nil) -> ^Scroll_
     n._v_track->add(n._v_thumb)
     n._h_track->add(n._h_thumb)
 
-    n._arrow_up    = _make_arrow(ICON_UP,    .Vertical,   -1, st.button_color, st.arrow_color)
-    n._arrow_down  = _make_arrow(ICON_DOWN,  .Vertical,    1, st.button_color, st.arrow_color)
-    n._arrow_left  = _make_arrow(ICON_LEFT,  .Horizontal, -1, st.button_color, st.arrow_color)
-    n._arrow_right = _make_arrow(ICON_RIGHT, .Horizontal,  1, st.button_color, st.arrow_color)
+    n._arrow_up = _make_arrow(ICON_UP, .Vertical, -1, st.button_color, st.arrow_color)
+    n._arrow_down = _make_arrow(ICON_DOWN, .Vertical, 1, st.button_color, st.arrow_color)
+    n._arrow_left = _make_arrow(ICON_LEFT, .Horizontal, -1, st.button_color, st.arrow_color)
+    n._arrow_right = _make_arrow(ICON_RIGHT, .Horizontal, 1, st.button_color, st.arrow_color)
     n._v_track->add(n._arrow_up.btn, n._arrow_down.btn)
     n._h_track->add(n._arrow_left.btn, n._arrow_right.btn)
 
@@ -228,10 +232,10 @@ _set_overlay_rects :: proc(n: ^Scroll_Area, viewport: common.Rect) {
 
     // Reserve square buttons at both ends.
     arrow := min(size, n._v_track.rect.h * 0.5)
-    n._arrow_up.btn.rect    = {n._v_track.rect.x, n._v_track.rect.y, size, arrow}
-    n._arrow_down.btn.rect  = {n._v_track.rect.x, n._v_track.rect.y + n._v_track.rect.h - arrow, size, arrow}
+    n._arrow_up.btn.rect = {n._v_track.rect.x, n._v_track.rect.y, size, arrow}
+    n._arrow_down.btn.rect = {n._v_track.rect.x, n._v_track.rect.y + n._v_track.rect.h - arrow, size, arrow}
     h_arrow := min(size, n._h_track.rect.w * 0.5)
-    n._arrow_left.btn.rect  = {n._h_track.rect.x, n._h_track.rect.y, h_arrow, size}
+    n._arrow_left.btn.rect = {n._h_track.rect.x, n._h_track.rect.y, h_arrow, size}
     n._arrow_right.btn.rect = {n._h_track.rect.x + n._h_track.rect.w - h_arrow, n._h_track.rect.y, h_arrow, size}
     _center_glyph(&n._arrow_up, size)
     _center_glyph(&n._arrow_down, size)

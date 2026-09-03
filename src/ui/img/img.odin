@@ -10,7 +10,8 @@ import "src:core/platform"
 import "src:core/render"
 import "src:core/svg"
 
-BANANA_COMPONENT :: true
+BANANA_COMPONENT      :: true
+BANANA_COMPONENT_TYPE :: ^Img_Node
 
 // Mirrors CSS object-fit.
 Fit :: enum {
@@ -71,18 +72,36 @@ _Img_Data :: struct {
     err:     Error,
 
     window: ^platform.Window,       // window the raster frames belong to
-    frames: []platform.Image_Frame, // .Raster; length 1 for still images
+    frames: []platform.Image_Frame, // .Raster still images; empty when animated
+    anim:   ^platform.GIF_Data,     // .Raster animations; frames stay bounded
     frame:  int,
     clock:  f32, // seconds accumulated on the current frame
     last:   time.Tick,
     paused: bool,
-    doc:    svg.Document,      // .Vector
+    doc:    svg.Document,
     cache:  svg.Cache,
 }
 
-New :: proc(src: string = "", style: Img_Style = {}, key: Maybe(string) = nil) -> ^Img_Node {
+New :: proc {_new_src_bytes, _new_src_string}
+
+@(private="file")
+_new_src_bytes :: proc(src: []u8, style: Img_Style = {}, key: Maybe(string) = nil) -> ^Img_Node {
+    n := _new(style, key)
+    _set_src(n, src)
+    return n
+}
+
+@(private="file")
+_new_src_string :: proc(src: string = "", style: Img_Style = {}, key: Maybe(string) = nil) -> ^Img_Node {
+    n := _new(style, key)
+    _set_src(n, src)
+    return n
+}
+
+@(private="file")
+_new :: proc (style: Img_Style = {}, key: Maybe(string) = nil) -> ^Img_Node {
     n := new(Img_Node)
-    node.Init(auto_cast(n), key)
+    node.Init(n, key)
     n.style = _get_style
     n.set_src = _set_src
     n.set_bytes = _set_bytes
@@ -105,7 +124,6 @@ New :: proc(src: string = "", style: Img_Style = {}, key: Maybe(string) = nil) -
     n.on_free = transmute(proc(self: ^Node))_free
     n.measure = transmute(node.MeasureCallback)_measure
     n->apply_measure()
-    _set_src(n, src)
     return n
 }
 
@@ -136,12 +154,14 @@ _type :: proc(n: ^Img_Node) -> _Kind {
 
 @(private="file")
 _frame_count :: proc(n: ^Img_Node) -> int {
-    return len(_data(n).frames)
+    d := _data(n)
+    if d.anim != nil do return platform.gif_get_frame_count(d.anim)
+    return len(d.frames)
 }
 
 @(private="file")
 _is_animated :: proc(n: ^Img_Node) -> bool {
-    return len(_data(n).frames) > 1
+    return _frame_count(n) > 1
 }
 
 @(private="file")
@@ -166,8 +186,9 @@ _is_paused :: proc(n: ^Img_Node) -> bool {
 @(private="file")
 _seek :: proc(n: ^Img_Node, frame: int) {
     d := _data(n)
-    if len(d.frames) == 0 do return
-    next := frame %% len(d.frames)
+    count := _frame_count(n)
+    if count == 0 do return
+    next := frame %% count
     if next == d.frame do return
     d.frame = next
     d.clock = 0
@@ -177,6 +198,7 @@ _seek :: proc(n: ^Img_Node, frame: int) {
 _release :: proc(d: ^_Img_Data) {
     switch d.kind {
     case .Raster:
+        platform.free_animation(d.anim)
         platform.free_image_frames(d.window, d.frames)
     case .Vector:
         svg.cache_destroy(&d.cache)
@@ -184,6 +206,7 @@ _release :: proc(d: ^_Img_Data) {
     case .Empty:
     }
     d.frames = nil
+    d.anim = nil
     d.frame = 0
     d.clock = 0
     d.last = {}
@@ -193,7 +216,9 @@ _release :: proc(d: ^_Img_Data) {
 
 @(private="file")
 _current :: proc(d: ^_Img_Data) -> ^render.Image {
-    if d.kind != .Raster || len(d.frames) == 0 do return nil
+    if d.kind != .Raster do return nil
+    if d.anim != nil do return platform.gif_get_image(d.anim, d.frame)
+    if len(d.frames) == 0 do return nil
     return d.frames[d.frame].image
 }
 
@@ -223,8 +248,20 @@ _load :: proc(n: ^Img_Node, encoded: []u8) -> Error {
         return .None
     }
 
-    w := layout.get_window(auto_cast(n))
+    w := layout.get_window(n)
     if w == nil do return .Decode_Failed
+
+    // Animations decode on demand into a small ring.
+    if anim, anim_err := platform.load_gif_dynamic(w, encoded); anim_err == .None {
+        _release(d)
+        d.anim = anim
+        d.window = w
+        d.kind = .Raster
+        n->dirty()
+        return .None
+    }
+
+    // fallback by load all the frames if stb:image cannot load gif frame dynamically
     frames, err := platform.load_image_frames(w, encoded)
     if err != .None do return _raster_error(err)
     _release(d)
@@ -250,7 +287,7 @@ _raster_error :: proc(err: platform.Image_Error) -> Error {
 }
 
 @(private="file")
-_awake :: proc(n: ^Img_Node){
+_awake :: proc(n: ^Img_Node) {
     d := _data(n)
     if !d.pending do return
     if layout.get_window(auto_cast(n)) == nil do return
@@ -266,7 +303,15 @@ _awake :: proc(n: ^Img_Node){
 }
 
 @(private="file")
-_set_src :: proc(n: ^Img_Node, src: string) {
+_set_src :: proc{_set_src_string, _set_src_bytes}
+
+@(private="file")
+_set_src_bytes :: proc(n: ^Img_Node, src: []u8) {
+    _set_bytes(n, src)
+}
+
+@(private="file")
+_set_src_string :: proc(n: ^Img_Node, src: string) {
     d := _data(n)
     delete(d.src)
     d.err = .None
@@ -313,7 +358,8 @@ _intrinsic :: proc(d: ^_Img_Data) -> (w, h: f32) {
 @(private="file")
 _process :: proc(n: ^Img_Node) {
     d := _data(n)
-    if d.kind != .Raster || len(d.frames) < 2 || d.paused do return
+    if d.kind != .Raster || d.paused do return
+    if _frame_count(n) < 2 do return
 
     now := time.tick_now()
     if d.last != {} {
@@ -321,14 +367,31 @@ _process :: proc(n: ^Img_Node) {
         d.clock += min(dt, 0.25)
     }
     d.last = now
+
+    if d.anim != nil {
+        _step_anim(d.anim, &d.frame, &d.clock)
+        platform.gif_prefetch(d.anim, d.frame, 1)
+        return
+    }
     _step(d.frames, &d.frame, &d.clock)
+}
+
+@(private="file")
+_step_anim :: proc(anim: ^platform.GIF_Data, frame: ^int, clock: ^f32) {
+    count := platform.gif_get_frame_count(anim)
+    if count == 0 do return
+    for {
+        delay := platform.gif_get_delay(anim, frame^)
+        if delay <= 0 || clock^ < delay do break
+        clock^ -= delay
+        frame^ = (frame^ + 1) % count
+    }
 }
 
 @(private)
 _step :: proc(frames: []platform.Image_Frame, frame: ^int, clock: ^f32) -> bool {
     advanced := false
-    // `for` rather than `if`: delays shorter than one frame time would
-    // otherwise fall permanently behind.
+    // `for` rather than `if`: delays shorter than one frame time would otherwise fall permanently behind.
     for clock^ >= frames[frame^].delay {
         delay := frames[frame^].delay
         if delay <= 0 do break
@@ -399,7 +462,11 @@ _draw :: proc(n: ^Img_Node) {
     case .Raster:
         painter.image(p, _current(d), dst, st.tint)
     case .Vector:
-        svg.draw_cached(&d.doc, p, &d.cache, dst, false, st.tint)
+        current_color: Maybe(common.Color)
+        if c := node.Resolve_Text_Style(auto_cast(n)).color; c != {} {
+            current_color = c
+        }
+        svg.draw_cached(&d.doc, p, &d.cache, dst, false, st.tint, current_color)
     case .Empty:
     }
     if crop do painter.pop_clip(p)

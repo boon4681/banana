@@ -3,6 +3,7 @@ package text_node
 import "core:math"
 import "core:strings"
 import "src:core/common"
+import "src:core/input"
 import "src:core/node"
 import "src:core/painter"
 import "src:core/text"
@@ -14,6 +15,8 @@ Text_Node :: struct {
     get_text: proc(self: ^Text_Node) -> string,
 }
 
+SELECTION_COLOR :: common.Color{60, 110, 220, 255}
+
 @(private = "file")
 _Text_Data :: struct {
     str:           string, // owned copy
@@ -24,9 +27,12 @@ _Text_Data :: struct {
     lines:          []text.Line,
     lines_max_w_em: f32,
     lines_valid:    bool,
+    measured_w_em:  f32,
+    measured_w_valid: bool,
 
     // Curve quads are expensive to rebuild for large static text.
     quads:          []painter.Glyph_Quad,
+    robin_quads:    []painter.Glyph_Quad,
     msdf_quads:     []painter.MSDF_Quad,
     quad_rect:      common.Rect,
     quad_font:      ^text.Font_Set,
@@ -37,6 +43,7 @@ _Text_Data :: struct {
     quads_valid:    bool,
     quad_version:   u64,
     glyph_cache:    painter.Glyph_Cache,
+    robin_cache:    painter.Glyph_Cache,
     msdf_cache:     painter.Glyph_Cache,
 
     // COLR v1 bitmaps bypass the outline caches.
@@ -51,9 +58,16 @@ _Color_Quad :: struct {
     size: f32,
 }
 
+@(private = "file")
+_TEXT_CONTENT_INTERFACE := node.Text_Content_Interface{
+    position_at = transmute(proc(self: ^Node, x, y: f32) -> text.Position)_position_at,
+    expand      = transmute(proc(self: ^Node, pos: text.Position, g: text.Granularity) -> text.Selection)_expand_selection,
+    str         = transmute(proc(self: ^Node) -> string)_get_text,
+}
+
 New :: proc(str: string = "", key: Maybe(string) = nil) -> ^Text_Node {
     n := new(Text_Node)
-    node.Init(auto_cast (n), key)
+    node.Init(n, key)
     n.set_text = _set_text
     n.get_text = _get_text
     n.data = new(_Text_Data)
@@ -61,6 +75,7 @@ New :: proc(str: string = "", key: Maybe(string) = nil) -> ^Text_Node {
     n.draw = transmute(proc(self: ^Node))_draw
     n.on_free = transmute(proc(self: ^Node))_free
     n.measure = transmute(node.MeasureCallback)_measure
+    n.text_content = &_TEXT_CONTENT_INTERFACE
     n->apply_measure()
 
     _set_text(n, str)
@@ -80,6 +95,7 @@ _get_text :: proc(self: ^Text_Node) -> string {
 @(private = "file")
 _set_text :: proc(self: ^Text_Node, s: string) {
     d := _data(self)
+    if d.str == s do return
     delete(d.str)
     text.shaped_destroy(&d.shaped)
     d.shaped_font = nil
@@ -95,7 +111,9 @@ _free :: proc(self: ^Text_Node) {
     text.shaped_destroy(&d.shaped)
     delete(d.lines)
     delete(d.quads)
+    delete(d.robin_quads)
     delete(d.msdf_quads)
+    delete(d.color_quads)
     free(self.data)
 }
 
@@ -104,11 +122,71 @@ _invalidate_layout :: proc(d: ^_Text_Data) {
     delete(d.lines)
     d.lines = nil
     d.lines_valid = false
+    d.measured_w_valid = false
     delete(d.quads)
     d.quads = nil
+    delete(d.robin_quads)
+    d.robin_quads = nil
     delete(d.msdf_quads)
     d.msdf_quads = nil
+    delete(d.color_quads)
+    d.color_quads = nil
     d.quads_valid = false
+}
+
+// Shaping and line-breaking are lazy, so a hit-test arriving before the first
+// draw has to bring both up to date itself.
+@(private = "file")
+_ensure_current :: proc(self: ^Text_Node) -> (^_Text_Data, node.Text_Style, []text.Line, bool) {
+    st := _resolve(self)
+    _ensure_shaped(self, st.font, st.font_weight)
+    d := _data(self)
+    if st.font == nil do return d, st, nil, false
+
+    max_w_em := _resolve_layout_width_em(d.measured_w_em, d.measured_w_valid, self.rect.w, st.font_size)
+    return d, st, _ensure_lines(d, max_w_em), true
+}
+
+@(private)
+_resolve_layout_width_em :: proc(measured_w_em: f32, measured_w_valid: bool, width, size: f32) -> f32 {
+    actual := f32(math.F32_MAX)
+    if width > 0 do actual = width / size
+    // Yoga may measure at a fractional width and pixel-round the final rect.
+    // Keep the measured width in that case so line count, node height, drawing,
+    // and scroll extent all describe the same layout.
+    if measured_w_valid && !math.is_inf(measured_w_em) &&
+       abs(measured_w_em * size - width) <= 1 {
+        return measured_w_em
+    }
+    return actual
+}
+
+@(private = "file")
+_metrics :: proc(st: node.Text_Style, r: common.Rect) -> text.Layout_Metrics {
+    return text.Layout_Metrics{
+        line_height = _line_height_em(st),
+        max_w       = r.w / st.font_size if st.font_size > 0 else 0,
+    }
+}
+
+@(private = "file")
+_position_at :: proc(self: ^Text_Node, x, y: f32) -> text.Position {
+    d, st, lines, ok := _ensure_current(self)
+    if !ok do return {}
+    size := st.font_size
+    // Node-local px -> em, which is the space the selection layer works in.
+    return text.position_at_point(
+        &d.shaped, lines, _metrics(st, self.rect),
+        (x - self.rect.x) / size, (y - self.rect.y) / size,
+    )
+}
+
+@(private = "file")
+_expand_selection :: proc(self: ^Text_Node, pos: text.Position, g: text.Granularity) -> text.Selection {
+    d, _, lines, ok := _ensure_current(self)
+    if !ok do return {pos, pos}
+    lo, hi := text.expand(&d.shaped, lines, pos, g)
+    return {{lo, false}, {hi, true}}
 }
 
 @(private = "file")
@@ -136,6 +214,14 @@ _ensure_shaped :: proc(self: ^Text_Node, font: ^text.Font_Set, weight: text.Font
 @(private = "file")
 _ensure_lines :: proc(d: ^_Text_Data, max_w_em: f32) -> []text.Line {
     if d.lines_valid && d.lines_max_w_em == max_w_em do return d.lines
+    when common.FRAME_PROFILE {
+        if d.lines_valid {
+            common.profile_count(.Reline_Width)
+            common.profile_note("reline w_em", f64(d.lines_max_w_em), f64(max_w_em))
+        } else {
+            common.profile_count(.Reline_Invalid)
+        }
+    }
     delete(d.lines)
     d.lines = text.break_lines(&d.shaped, max_w_em, context.allocator)
     d.lines_max_w_em = max_w_em
@@ -156,11 +242,42 @@ _line_height_em :: proc(st: node.Text_Style) -> f32 {
     return text.line_height(st.font, st.font_weight)
 }
 
+@(private = "file")
+_draw_selection :: proc(self: ^Text_Node, d: ^_Text_Data, p: painter.Painter, st: node.Text_Style, r: common.Rect, im: ^input.Input_State) {
+    sel, ok := input.selection_for_node(im, self)
+    if !ok || text.sel_empty(sel) || len(d.lines) == 0 do return
+    size := st.font_size
+    rects := text.selection_rects(&d.shaped, d.lines, _metrics(st, r), sel)
+    for hr in rects {
+        painter.rect(p, common.Rect{
+            r.x + hr.x * size,
+            r.y + hr.y * size,
+            hr.w * size,
+            hr.h * size,
+        }, SELECTION_COLOR)
+    }
+}
+
 @(private="file")
 _draw_cached :: proc(d: ^_Text_Data, p: painter.Painter, st: node.Text_Style) {
+    when text.ROBIN_TEXT_ACTIVE {
+        if len(d.robin_quads) > 0 {
+            data, version := text.robin_render_data()
+            painter.robin_cached(p, &d.robin_cache, d.quad_version, data, version, d.robin_quads, st.color)
+        }
+    }
     if len(d.msdf_quads) > 0 {
         pixels, aw, ah, atlas_version := text.msdf_atlas_data()
-        painter.msdf_cached(p, &d.msdf_cache, d.quad_version, pixels, aw, ah, atlas_version, f32(text.MSDF_RANGE_PX), d.msdf_quads, st.color)
+        lo, hi := text.msdf_atlas_dirty_rows()
+        painter.msdf_cached(p, &d.msdf_cache, d.quad_version, painter.MSDF_Atlas{
+            pixels      = pixels,
+            width       = aw,
+            height      = ah,
+            version     = atlas_version,
+            dirty_lo    = lo,
+            dirty_hi    = hi,
+            pixel_range = f32(text.MSDF_RANGE_PX),
+        }, d.msdf_quads, st.color)
     }
     if len(d.quads) > 0 {
         curves, version := text.curve_data()
@@ -201,6 +318,8 @@ _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_m
 
     max_w_em := f32(math.F32_MAX)
     if w_mode != .Undefined && !math.is_nan(w) && w > 0 do max_w_em = w / size
+    d.measured_w_em = max_w_em
+    d.measured_w_valid = true
 
     lines := _ensure_lines(d, max_w_em)
     widest: f32 = 0
@@ -224,8 +343,12 @@ _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_m
 
 @(private = "file")
 _draw :: proc(self: ^Text_Node) {
+    text_start := common.profile_begin(.Text_Draw)
+    defer common.profile_end(.Text_Draw, text_start)
     st := _resolve(self)
+    es_start := common.profile_begin(.Ensure_Shaped)
     _ensure_shaped(self, st.font, st.font_weight)
+    common.profile_end(.Ensure_Shaped, es_start)
     d := _data(self)
     if st.font == nil || len(d.shaped.words) == 0 do return
 
@@ -233,22 +356,39 @@ _draw :: proc(self: ^Text_Node) {
     size := st.font_size
     r := self.rect
 
-    max_w_em := f32(math.F32_MAX)
-    if r.w > 0 do max_w_em = r.w / size
+    max_w_em := _resolve_layout_width_em(d.measured_w_em, d.measured_w_valid, r.w, size)
+    el_start := common.profile_begin(.Ensure_Lines)
     lines := _ensure_lines(d, max_w_em)
+    common.profile_end(.Ensure_Lines, el_start)
 
     scale := painter.pixel_scale(p)
     lh := _line_height_em(st)
     geometry_matches := d.quads_valid &&
-        d.quad_rect.w == r.w &&
-        d.quad_rect.h == r.h &&
-        d.quad_font == st.font &&
-        d.quad_font_size == size &&
-        d.quad_weight == st.font_weight &&
-        d.quad_line_h == lh &&
-        d.quad_scale_y == scale.y
+    d.quad_rect.w == r.w &&
+    d.quad_font == st.font &&
+    d.quad_font_size == size &&
+    d.quad_weight == st.font_weight &&
+    d.quad_line_h == lh &&
+    d.quad_scale_y == scale.y
 
-    // skip if the geometry is the same
+    when common.FRAME_PROFILE {
+        if !d.quads_valid                   do common.profile_count(.Miss_Valid)
+        else if d.quad_rect.w != r.w        do common.profile_count(.Miss_Rect_W)
+        else if d.quad_font != st.font      do common.profile_count(.Miss_Font)
+        else if d.quad_font_size != size    do common.profile_count(.Miss_Size)
+        else if d.quad_weight != st.font_weight do common.profile_count(.Miss_Weight)
+        else if d.quad_line_h != lh         do common.profile_count(.Miss_Line_H)
+        else if d.quad_scale_y != scale.y   do common.profile_count(.Miss_Scale)
+        else                                do common.profile_count(.Cache_Hit)
+    }
+
+    // Selection is drawn behind glyphs and does not affect their cache.
+    im := input.get_context()
+    if im != nil && im.selection.valid {
+        _draw_selection(self, d, p, st, r, im)
+    }
+
+    // Skip rebuilding if the geometry is the same.
     if geometry_matches {
         moved := d.quad_rect.x != r.x || d.quad_rect.y != r.y
         if moved {
@@ -268,6 +408,11 @@ _draw :: proc(self: ^Text_Node) {
     }
     delete(d.quads)
     quads := make([dynamic]painter.Glyph_Quad, 0, total_glyphs, context.allocator)
+    delete(d.robin_quads)
+    robin_quads: [dynamic]painter.Glyph_Quad
+    when text.ROBIN_TEXT_ACTIVE {
+        robin_quads = make([dynamic]painter.Glyph_Quad, 0, total_glyphs, context.allocator)
+    }
     delete(d.msdf_quads)
     msdf_quads := make([dynamic]painter.MSDF_Quad, 0, total_glyphs, context.allocator)
     delete(d.color_quads)
@@ -326,7 +471,7 @@ _draw :: proc(self: ^Text_Node) {
                                 (mg.plane[2] - mg.plane[0]) * size,
                                 (mg.plane[3] - mg.plane[1]) * size,
                             },
-                            uv       = mg.uv,
+                            atlas    = mg.atlas,
                             tint     = {layer.color[0], layer.color[1], layer.color[2], layer.color[3]},
                             has_tint = true,
                         })
@@ -336,31 +481,73 @@ _draw :: proc(self: ^Text_Node) {
                 }
                 gl := text.glyph(g.face, g.gid, g.embold)
                 if gl.curve_count > 0 {
-                    if mg, ok := text.msdf_glyph(g.face, g.gid, g.embold); ok {
-                        append(&msdf_quads, painter.MSDF_Quad{
-                            rect = {
-                                gx + mg.plane[0] * size,
-                                gy - mg.plane[3] * size,
-                                (mg.plane[2] - mg.plane[0]) * size,
-                                (mg.plane[3] - mg.plane[1]) * size,
-                            },
-                            uv = mg.uv,
-                        })
-                    } else {
-                        lo := gl.min - pad
-                        hi := gl.max + pad
-                        append(&quads, painter.Glyph_Quad{
-                            rect = {
-                                gx + lo.x * size,
-                                gy - hi.y * size,
-                                (hi.x - lo.x) * size,
-                                (hi.y - lo.y) * size,
-                            },
-                            uv0         = {lo.x, hi.y},
-                            uv1         = {hi.x, lo.y},
-                            curve_base  = gl.curve_base,
-                            curve_count = gl.curve_count,
-                        })
+                    // An atlas-backed face uses MSDF only when its bundle
+                    // contains this exact glyph/style. It otherwise follows
+                    // the normal ROBIN path without generating a new MSDF.
+                    used_msdf := false
+                    if g.face.prefer_msdf {
+                        if mg, ok := text.msdf_glyph_cached(g.face, g.gid, g.embold); ok {
+                            append(&msdf_quads, painter.MSDF_Quad{
+                                rect = {
+                                    gx + mg.plane[0] * size,
+                                    gy - mg.plane[3] * size,
+                                    (mg.plane[2] - mg.plane[0]) * size,
+                                    (mg.plane[3] - mg.plane[1]) * size,
+                                },
+                                atlas = mg.atlas,
+                            })
+                            used_msdf = true
+                        }
+                    }
+                    if used_msdf {
+                        pen += g.advance * size
+                        continue
+                    }
+                    used_robin := false
+                    when text.ROBIN_TEXT_ACTIVE {
+                        if rg, ok := text.robin_glyph(g.face, g.gid, g.embold); ok {
+                            append(&robin_quads, painter.Glyph_Quad{
+                                rect = {
+                                    gx + rg.plane[0] * size,
+                                    gy - rg.plane[3] * size,
+                                    (rg.plane[2] - rg.plane[0]) * size,
+                                    (rg.plane[3] - rg.plane[1]) * size,
+                                },
+                                uv0         = {0, text.ROBIN_GRID},
+                                uv1         = {text.ROBIN_GRID, 0},
+                                curve_base  = rg.cell_base,
+                                curve_count = 0,
+                            })
+                            used_robin = true
+                        }
+                    }
+                    if !used_robin {
+                        if mg, ok := text.msdf_glyph(g.face, g.gid, g.embold); ok {
+                            append(&msdf_quads, painter.MSDF_Quad{
+                                rect = {
+                                    gx + mg.plane[0] * size,
+                                    gy - mg.plane[3] * size,
+                                    (mg.plane[2] - mg.plane[0]) * size,
+                                    (mg.plane[3] - mg.plane[1]) * size,
+                                },
+                                atlas = mg.atlas,
+                            })
+                        } else {
+                            lo := gl.min - pad
+                            hi := gl.max + pad
+                            append(&quads, painter.Glyph_Quad{
+                                rect = {
+                                    gx + lo.x * size,
+                                    gy - hi.y * size,
+                                    (hi.x - lo.x) * size,
+                                    (hi.y - lo.y) * size,
+                                },
+                                uv0         = {lo.x, hi.y},
+                                uv1         = {hi.x, lo.y},
+                                curve_base  = gl.curve_base,
+                                curve_count = gl.curve_count,
+                            })
+                        }
                     }
                 }
                 pen += g.advance * size
@@ -370,6 +557,7 @@ _draw :: proc(self: ^Text_Node) {
     }
 
     d.quads = quads[:]
+    d.robin_quads = robin_quads[:]
     d.msdf_quads = msdf_quads[:]
     d.color_quads = color_quads[:]
     d.quad_rect = r

@@ -2,8 +2,10 @@ package box
 
 import "src:core/node"
 import "src:core/painter"
+import "src:core/events"
 
-BANANA_COMPONENT :: true
+BANANA_COMPONENT      :: true
+BANANA_COMPONENT_TYPE :: ^Box
 
 Box_Style :: struct {
     using base: node.Style,
@@ -13,19 +15,27 @@ Box_Style :: struct {
 
 Box :: struct {
     using node: Node,
+    onmousedown: proc(self: ^Box, e: ^events.Mouse_Event),
+
     style: proc(self: ^Box) -> ^Box_Style
 }
 
 New :: proc(style: Box_Style = {}, key: Maybe(string) = nil) -> ^Box {
     n := new(Box)
-    node.Init(auto_cast(n), key)
+    node.Init(n, key)
     n.style = _get_style
     node.Set_Style(auto_cast(n), new_clone(style))
     node.Init_Style(auto_cast(n))
     _apply_div_defaults(n)
     n.draw = transmute(proc(self: ^Node))_box_draw
     n.on_free = transmute(proc(self: ^Node))_box_free
+    n->on(events.MOUSE_DOWN_EVENT, _on_down)
     return n
+}
+
+@(private="file")
+_from_signal :: proc(s: ^events.Event_Signal) -> ^Box {
+    return auto_cast(s.current_target)
 }
 
 // Approximate CSS block and inline flow with Yoga.
@@ -41,8 +51,15 @@ _apply_div_defaults :: proc(n: ^Box) {
 }
 
 @(private="file")
-_get_style:: proc(self: ^Box) -> ^Box_Style {
+_get_style :: proc(self: ^Box) -> ^Box_Style {
     return auto_cast(self._internal_style)
+}
+
+@(private="file")
+_on_down :: proc(s: ^events.Event_Signal) {
+    n := _from_signal(s)
+    e: ^events.Mouse_Event = auto_cast(s.data)
+    if n.onmousedown != nil do n->onmousedown(e)
 }
 
 @(private="file")

@@ -9,3 +9,4 @@ _read_source :: proc(path: string) -> ([]u8, bool) {
     if data == nil do return nil, false
     return data, true
 }
+

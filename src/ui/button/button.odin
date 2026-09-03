@@ -5,7 +5,8 @@ import "src:core/node"
 import "src:core/painter"
 import "src:ui/text_node"
 
-BANANA_COMPONENT :: true
+BANANA_COMPONENT      :: true
+BANANA_COMPONENT_TYPE :: ^Button
 
 Button_Style :: struct {
     using base:   node.Style,
@@ -19,9 +20,6 @@ Button :: struct {
     using node: Node,
     style: proc(self: ^Button) -> ^Button_Style,
 
-    label:    ^text_node.Text_Node,
-    set_text: proc(self: ^Button, s: string),
-
     // Fired on a click.
     onclick: proc(self: ^Button),
 
@@ -31,7 +29,7 @@ Button :: struct {
 
 New :: proc(text: string = "", style: Button_Style = {}, key: Maybe(string) = nil) -> ^Button {
     n := new(Button)
-    node.Init(auto_cast(n), key)
+    node.Init(n, key)
 
     st := style
     if st.background == {} do st.background = {250, 250, 250, 255}
@@ -44,12 +42,12 @@ New :: proc(text: string = "", style: Button_Style = {}, key: Maybe(string) = ni
     node.Init_Style(auto_cast(n))
     _apply_defaults(n)
 
-    n.set_text = _set_text
     n.draw = transmute(proc(self: ^Node))_draw
     n.on_free = transmute(proc(self: ^Node))_free
 
-    n.label = text_node.New(text, "label")
-    n->add(n.label)
+    // A convenience for Odin callers only: markup children come through the
+    // normal child path, so this stays empty there.
+    if text != "" do n->add(text_node.New(text))
 
     n->on(events.MOUSE_ENTER_EVENT, _on_enter)
     n->on(events.MOUSE_LEAVE_EVENT, _on_leave)
@@ -66,8 +64,9 @@ _apply_defaults :: proc(n: ^Button) {
     s->set_justify_content(.Center)
     s->set_align_items(.Center)
     s->set_flex_shrink(0)
-    s->set_padding_horizontal(16)
-    s->set_padding_vertical(8)
+    s->set_padding_x(16)
+    s->set_padding_y(8)
+    s->set_select_mode(.None)
     // primary-foreground: neutral-900 on the light primary fill.
     if s->get_color() == {} do s->set_color({23, 23, 23, 255})
 }
@@ -75,11 +74,6 @@ _apply_defaults :: proc(n: ^Button) {
 @(private="file")
 _get_style :: proc(n: ^Button) -> ^Button_Style {
     return auto_cast(n._internal_style)
-}
-
-@(private="file")
-_set_text :: proc(n: ^Button, s: string) {
-    n.label->set_text(s)
 }
 
 @(private="file")
