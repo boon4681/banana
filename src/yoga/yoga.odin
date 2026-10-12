@@ -157,10 +157,10 @@ Style_Set_Edge_Proc      :: #type proc "c" (node: NodeRef, edge: Edge, v: f32)
 Style_Set_Edge_Auto_Proc :: #type proc "c" (node: NodeRef, edge: Edge)
 
 MeasureFunc :: #type proc "c" (
-	node: NodeRef,
-	width: f32,
-	width_mode: MeasureMode,
-	height: f32,
+	node:        NodeRef,
+	width:       f32,
+	width_mode:  MeasureMode,
+	height:      f32,
 	height_mode: MeasureMode,
 ) -> Size
 
