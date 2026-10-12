@@ -17,7 +17,14 @@ Init_Options :: struct {
     canvas: string,
 }
 
-DEFAULT_OPTIONS :: Init_Options{width = 800, height = 600, title = "banana", vsync = true, msaa_samples = 4, decorated = true}
+DEFAULT_OPTIONS :: Init_Options{
+    width        = 800,
+    height       = 600,
+    title        = "banana",
+    vsync        = true,
+    msaa_samples = 0,
+    decorated    = true
+}
 
 is_decorated :: proc(opts: Init_Options) -> bool {
     return opts.decorated.? or_else true

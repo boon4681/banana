@@ -71,7 +71,12 @@ _init :: proc(
     glfw.WindowHint(glfw.CONTEXT_VERSION_MINOR, 3)
     glfw.WindowHint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
     glfw.WindowHint(glfw.OPENGL_FORWARD_COMPAT, 1)
-    glfw.WindowHint(glfw.SAMPLES, i32(opts.msaa_samples))
+    direct := !opts.transparent
+    samples := i32(opts.msaa_samples) if direct && opts.msaa_samples > 1 else 0
+    glfw.WindowHint(glfw.SAMPLES, samples)
+    glfw.WindowHint(glfw.SRGB_CAPABLE, direct ? 1 : 0)
+    glfw.WindowHint(glfw.STENCIL_BITS, direct ? 8 : 0)
+    glfw.WindowHint(glfw.DEPTH_BITS, 0)
     glfw.WindowHint(glfw.DECORATED, is_decorated(opts) ? 1 : 0)
     glfw.WindowHint(glfw.TRANSPARENT_FRAMEBUFFER, opts.transparent ? 1 : 0)
     _active.visible = false

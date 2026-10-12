@@ -11,8 +11,8 @@ import "src:core/events"
 import "src:core/render"
 
 Window_On_Proc :: proc(
-    w: ^Window,
-    type: string,
+    w:        ^Window,
+    type:     string,
     callback: events.Callback,
     capture := false,
     once := false,
@@ -72,7 +72,11 @@ New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
         glue,
         opts.width,
         opts.height,
-        {vsync = opts.vsync, msaa_samples = max(opts.msaa_samples, 1)},
+        {
+            vsync        = opts.vsync,
+            msaa_samples = max(opts.msaa_samples, 0),
+            transparent  = opts.transparent,
+        },
         context.allocator,
     )
 
@@ -212,8 +216,8 @@ close :: proc(w: ^Window) {
 
 @(private = "file")
 _window_on :: proc(
-    w: ^Window,
-    type: string,
+    w:        ^Window,
+    type:     string,
     callback: events.Callback,
     capture := false,
     once := false,

@@ -335,7 +335,7 @@ _hit_test :: proc(hwnd: win32.HWND, lparam: win32.LPARAM) -> win32.LRESULT {
     scale := w.scale if w != nil && w.scale > 0 else 1
 
     if _frame.resize_border > 0 {
-        border := max(i32(f32(_frame.resize_border) * scale), 1)
+        border := max(i32(f32(_frame.resize_border) * scale * 0.5), 1)
         left := x < rect.left + border
         right := x >= rect.right - border
         top := y < rect.top + border
