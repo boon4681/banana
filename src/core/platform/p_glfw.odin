@@ -127,6 +127,23 @@ _poll_events :: proc() {
 }
 
 @(private = "file")
+_wait_events :: proc(seconds: f64) {
+    if seconds <= 0 {
+        glfw.PollEvents()
+        return
+    }
+    glfw.WaitEventsTimeout(seconds)
+}
+
+@(private = "file")
+_refresh_rate :: proc() -> int {
+    monitor := glfw.GetPrimaryMonitor()
+    if monitor == nil do return 0
+    mode := glfw.GetVideoMode(monitor)
+    return int(mode.refresh_rate) if mode != nil else 0
+}
+
+@(private = "file")
 _poll_size :: proc() -> (int, int) {
     w, h := glfw.GetFramebufferSize(_active.handle)
     return int(w), int(h)
@@ -218,6 +235,12 @@ _minimize :: proc() {
 _is_maximized :: proc() -> bool {
     if _active == nil || _active.handle == nil do return false
     return glfw.GetWindowAttrib(_active.handle, glfw.MAXIMIZED) != 0
+}
+
+@(private = "file")
+_is_minimized :: proc() -> bool {
+    if _active == nil || _active.handle == nil do return false
+    return glfw.GetWindowAttrib(_active.handle, glfw.ICONIFIED) != 0
 }
 
 @(private = "file")
@@ -476,6 +499,8 @@ PLATFORM_GLFW :: Platform_Interface{
     shutdown            = _shutdown,
     should_close        = _should_close,
     poll_events         = _poll_events,
+    wait_events         = _wait_events,
+    refresh_rate        = _refresh_rate,
     poll_size           = _poll_size,
     content_scale       = _content_scale,
     request_close       = _request_close,
@@ -488,6 +513,7 @@ PLATFORM_GLFW :: Platform_Interface{
     set_cursor          = _set_cursor,
     minimize            = _minimize,
     is_maximized        = _is_maximized,
+    is_minimized        = _is_minimized,
     toggle_maximize     = _toggle_maximize,
     set_window_user_ptr = _set_window_user_ptr,
     clipboard_get       = _clipboard_get,

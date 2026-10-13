@@ -3,6 +3,12 @@ package platform
 import "base:runtime"
 import "src:core/render"
 import "src:core/events"
+import "src:core/redraw"
+
+// `.On_Demand` paints a frame only when something was marked with redraw.mark.
+Frame_Mode  :: redraw.Mode
+
+Frame_Stats :: redraw.Stats
 
 Init_Options :: struct {
     width:        int,
@@ -12,9 +18,10 @@ Init_Options :: struct {
     msaa_samples: u32,
     decorated:    Maybe(bool),
     transparent:  bool,
+    frame_mode:   Frame_Mode,
     // Web only: id of the <canvas> this window renders into.
     // Empty falls back to "banana-canvas".
-    canvas: string,
+    canvas:       string,
 }
 
 DEFAULT_OPTIONS :: Init_Options{
@@ -39,6 +46,8 @@ Platform_Interface :: struct #all_or_none {
     shutdown:            proc(),
     should_close:        proc() -> bool,
     poll_events:         proc(),
+    wait_events:         proc(seconds: f64),
+    refresh_rate:        proc() -> int, // get refresh_rate of the primary display; 0 when unknown
     poll_size:           proc() -> (w, h: int),
     content_scale:       proc() -> f32, // browser devicePixelRatio equivalent
     request_close:       proc(),
@@ -51,6 +60,7 @@ Platform_Interface :: struct #all_or_none {
     set_cursor:          proc(shape: Cursor),
     minimize:            proc(),
     is_maximized:        proc() -> bool,
+    is_minimized:        proc() -> bool,
     toggle_maximize:     proc(), // Toggles between maximized and restored.
     set_window_user_ptr: proc(state: rawptr, ptr: rawptr),
     clipboard_get:       proc(allocator: runtime.Allocator) -> string,
