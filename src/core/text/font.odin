@@ -18,6 +18,14 @@ WEIGHT_BOLD        :: FontWeight(700)
 WEIGHT_EXTRA_BOLD  :: FontWeight(800)
 WEIGHT_BLACK       :: FontWeight(900)
 
+WGHT               :: HB.Tag(0x77676874) // 'wght'
+OS2                :: HB.Tag(0x4F532F32) // 'OS/2'
+
+// NAME
+NAME                       :: HB.Tag(0x6E616D65) // 'name'
+NAME_ID_FAMILY             :: 1
+NAME_ID_TYPOGRAPHIC_FAMILY :: 16
+
 @(private) SYNTHETIC_BOLD_MAX :: 0.035
 @(private) SYNTHETIC_BOLD_SPAN :: 300.0
 
@@ -28,7 +36,7 @@ Face :: struct {
     source_index:  int,
     // Atlas-backed faces prefer a matching prebuilt MSDF glyph.
     // A missing record fallback to ROBIN.
-    prefer_msdf:  bool,
+    prefer_msdf:   bool,
     info:          stbtt.fontinfo,
     blob:          HB.Blob,
     hb_face:       HB.Face,
@@ -41,13 +49,13 @@ Face :: struct {
     space_advance: f32,
     glyphs:        map[Glyph_Key]Glyph,
 
-    weight: FontWeight, // as authored by the file, or the variable default
+    weight:      FontWeight, // as authored by the file, or the variable default
     // A variable face covers [wght_min, wght_max] by instancing rather than by
     // being one fixed weight; nil `hb` instances are cut from it on demand.
-    variable:  bool,
-    wght_min:  FontWeight,
-    wght_max:  FontWeight,
-    instances: map[FontWeight]^Face, // variable faces only; owned
+    variable:    bool,
+    wght_min:    FontWeight,
+    wght_max:    FontWeight,
+    instances:   map[FontWeight]^Face, // variable faces only; owned
     // Set on instances so they aren't re-instanced or re-registered.
     instance_of: ^Face,
 
@@ -68,9 +76,24 @@ Fallback_Key :: struct {
     script: u32,
 }
 
-set_create :: proc() -> ^Font_Set {
+// Create font set. Default to system fallback font,
+// so it work without register font.
+set_create :: proc {
+    _set_create_default,
+    _set_create
+}
+
+@(private)
+_set_create_default :: proc() -> ^Font_Set {
+    return _set_create(true)
+}
+
+@(private)
+_set_create :: proc(fallback: bool = true) -> ^Font_Set {
     set := new(Font_Set)
-    set.on_missing = _platform_fallback
+    if(fallback) {
+        set.on_missing = _platform_fallback
+    }
     return set
 }
 
@@ -95,8 +118,6 @@ set_register :: proc(set: ^Font_Set, data: []u8, index := 0, family := "") -> ^F
     append(&set.faces, f)
     return f
 }
-
-WGHT :: HB.Tag(0x77676874) // 'wght'
 
 @(private)
 _face_create :: proc(data: []u8, index: int) -> ^Face {
@@ -127,10 +148,6 @@ _face_create :: proc(data: []u8, index: int) -> ^Face {
     }
     return f
 }
-
-NAME                       :: HB.Tag(0x6E616D65) // 'name'
-NAME_ID_FAMILY             :: 1
-NAME_ID_TYPOGRAPHIC_FAMILY :: 16
 
 // Prefer typographic family names so weights remain grouped.
 @(private = "file")
@@ -206,8 +223,6 @@ _face_init_metrics :: proc(f: ^Face) {
     stbtt.GetCodepointHMetrics(&f.info, ' ', &adv, &lsb)
     f.space_advance = f32(adv) * f.inv_upem
 }
-
-OS2 :: HB.Tag(0x4F532F32) // 'OS/2'
 
 // usWeightClass lives at OS/2 offset 4, big-endian.
 @(private)
