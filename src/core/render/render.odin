@@ -3,6 +3,8 @@ package render
 Init_Options :: struct {
     vsync:        bool,
     msaa_samples: u32,
+    transparent:  bool,
+    retained:     bool, // Frames are drawn into a target that keeps its pixels, so a frame can redraw part of the window.
 }
 
 // Unify api for renderer to interact with platform state; see src/platform
@@ -39,7 +41,7 @@ Render_Target :: struct {
 Texture               :: distinct u32
 
 Pixel_Format          :: enum { RGBA8, BGRA8, R8, A8 }
-Blend_Mode            :: enum { Opaque, Alpha, Additive }
+Blend_Mode            :: enum { Opaque, Alpha, Additive, Premultiplied }
 Texture_Filter        :: enum { Nearest, Linear }
 
 INVALID_TEXTURE       :: Texture{}
@@ -52,4 +54,3 @@ pixel_size :: proc(format: Pixel_Format) -> int {
     }
     return 0
 }
-

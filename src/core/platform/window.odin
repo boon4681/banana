@@ -1,6 +1,7 @@
 package platform
 
 import "base:runtime"
+import "core:time"
 import "src:core/common"
 import "src:core/eventloop"
 import "src:core/node"
@@ -8,7 +9,11 @@ import "src:core/painter"
 import "src:core/input"
 import "src:core/hit_test"
 import "src:core/events"
+import "src:core/redraw"
 import "src:core/render"
+
+IDLE_INTERVAL :: 100 * time.Millisecond
+IDLE_AFTER    :: time.Second
 
 Window_On_Proc :: proc(
     w:        ^Window,
@@ -37,12 +42,17 @@ Window :: struct {
     scale:          f32,
     awaken:         bool,
     // Application-owned callback context. Window never frees this pointer.
-    state:      rawptr,
-    on_refresh: proc(w: ^Window),
-    on:         Window_On_Proc,
-    off:        Window_Off_Proc,
-    input:      input.Input_State,
-    queue:      [dynamic]EVENT,
+    state:          rawptr,
+    on_refresh:     proc(w: ^Window),
+    on:             Window_On_Proc,
+    off:            Window_Off_Proc,
+    input:          input.Input_State,
+    queue:          [dynamic]EVENT,
+
+    redraw_state:   redraw.State,
+    frame_interval: time.Duration,
+    tick_at:        time.Tick,
+    input_at:       time.Tick,
 }
 
 @(private, thread_local)
@@ -60,6 +70,9 @@ New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
     w.loop = eventloop.create(w.allocator)
     w.on = _window_on
     w.off = _window_off
+    w.redraw_state.mode = opts.frame_mode
+    w.redraw_state.dirty = true
+    redraw.set_current(&w.redraw_state)
 
     w.platform_state = PLATFORM.create_state(context.allocator)
     PLATFORM.set_active_state(w.platform_state)

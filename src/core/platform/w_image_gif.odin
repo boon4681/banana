@@ -245,15 +245,19 @@ _gif_decode_next :: proc(anim: ^GIF_Data) -> bool {
     }
 
     image := anim.ring[slot]
-    // Overwriting the pixels invalidates the uploaded texture
-    if image.texture != render.INVALID_TEXTURE {
-        free_image_texture(anim.window, image)
-    }
-
     ms := c.int(0)
     if gif.next(anim.stream, raw_data(image.data), c.size_t(frame_bytes), &ms) != 1 {
         anim.ring_at[slot] = -1
+        if image.texture != render.INVALID_TEXTURE {
+            free_image_texture(anim.window, image)
+        }
         return false
+    }
+    if image.texture != render.INVALID_TEXTURE {
+        prev := scoped_current(anim.window)
+        updated := render.RENDERER.update_texture(image.texture, image.data, {0, 0, f32(anim.width), f32(anim.height)})
+        restore_current(prev)
+        if !updated do free_image_texture(anim.window, image)
     }
     anim.ring_at[slot] = index
     anim.decoded = index + 1
