@@ -32,6 +32,8 @@ Selection_Gesture :: struct {
     last_click_x:    f32,
     last_click_y:    f32,
     click_count:     int,
+
+    last_tick: time.Tick,
 }
 
 Selection_State :: struct {
@@ -39,6 +41,8 @@ Selection_State :: struct {
     valid:   bool,
     gesture: Selection_Gesture,
 }
+
+Selection_Autoscroll: proc(im: ^Input_State, from: ^Node, seconds: f32)
 
 selection_begin :: proc(im: ^Input_State, x, y: f32, now: time.Tick) -> bool {
     hit := hit_test.hit_test(im.root, x, y)
@@ -64,8 +68,7 @@ selection_begin :: proc(im: ^Input_State, x, y: f32, now: time.Tick) -> bool {
     near := hit == g.last_click_node &&
             abs(x - g.last_click_x) <= MULTI_CLICK_DISTANCE &&
             abs(y - g.last_click_y) <= MULTI_CLICK_DISTANCE
-    recent := g.last_click_time != {} &&
-              time.tick_diff(g.last_click_time, now) <= MULTI_CLICK_INTERVAL
+    recent := g.last_click_time != {} && time.tick_diff(g.last_click_time, now) <= MULTI_CLICK_INTERVAL
     g.click_count = near && recent ? g.click_count + 1 : 1
     g.last_click_node = hit
     g.last_click_time = now
@@ -78,7 +81,7 @@ selection_begin :: proc(im: ^Input_State, x, y: f32, now: time.Tick) -> bool {
     case:   g.granularity = .Line
     }
 
-    unit, ok := _unit_at(im.root, hit, x, y, g.granularity, false)
+    unit, ok := _unit_at(im.root, hit, x, y, g.granularity, node.Resolve_User_Select(hit) != .None)
     if !ok {
         selection_clear(im)
         return false
@@ -105,12 +108,25 @@ selection_extend :: proc(im: ^Input_State, x, y: f32) {
     }
 
     hit := hit_test.hit_test(im.root, x, y)
-    unit, ok := _unit_at(im.root, hit, x, y, g.granularity, true)
+    unit, ok := _unit_at(im.root, hit, x, y, g.granularity, true, g.anchor.start.node)
     if ok do _extend_to_unit(im.root, s, unit)
 }
 
 selection_end :: proc(im: ^Input_State) {
     im.selection.gesture.dragging = false
+}
+
+selection_tick :: proc(im: ^Input_State, now: time.Tick) {
+    g := &im.selection.gesture
+    if !g.dragging || !im.selection.valid || im.captured != nil {
+        g.last_tick = {}
+        return
+    }
+    seconds: f32
+    if g.last_tick != {} do seconds = min(f32(time.duration_seconds(time.tick_diff(g.last_tick, now))), 0.05)
+    g.last_tick = now
+    if Selection_Autoscroll != nil do Selection_Autoscroll(im, g.anchor.start.node, seconds)
+    selection_extend(im, im.mouse_x, im.mouse_y)
 }
 
 selection_clear :: proc(im: ^Input_State) {
@@ -125,17 +141,18 @@ _unit_at :: proc(
     root, hit: ^Node,
     x, y: f32,
     granularity: text.Granularity,
-    nearest: bool,
+    nearest:     bool,
+    anchor:      ^Node = nil,
 ) -> (Selection_Unit, bool) {
     target := hit
-    if scope := node.User_Select_All_Scope(target); scope != nil {
+    if scope := node.Resolve_User_Select_All_Scope(target); scope != nil {
         return _scope_unit(scope)
     }
     if !node.is_selectable(target) && nearest {
-        target = _nearest_selectable(root, x, y)
+        target = _closest_selectable(root, hit, x, y, anchor)
     }
     if !node.is_selectable(target) do return {}, false
-    if scope := node.User_Select_All_Scope(target); scope != nil {
+    if scope := node.Resolve_User_Select_All_Scope(target); scope != nil {
         return _scope_unit(scope)
     }
 
@@ -256,36 +273,43 @@ _append_selected_text :: proc(im: ^Input_State, n: ^Node, b: ^strings.Builder, w
 }
 
 @(private = "file")
-_nearest_selectable :: proc(root: ^Node, x, y: f32) -> ^Node {
-    best: ^Node
-    best_distance := max(f32)
-    _nearest_selectable_walk(root, x, y, &best, &best_distance)
-    return best
+_closest_selectable :: proc(root, hit: ^Node, x, y: f32, anchor: ^Node) -> ^Node {
+    at := hit
+    for at != nil && at != root && !_holds_selectable(at, x, y, anchor) do at = at.parent
+    if at == nil do at = root
+    for at != nil && !node.is_selectable(at) {
+        best: ^Node
+        best_distance := max(f32)
+        for child in at.children {
+            if !_holds_selectable(child, x, y, anchor) do continue
+            if distance := _distance(child, x, y); distance < best_distance {
+                best = child
+                best_distance = distance
+            }
+        }
+        at = best
+    }
+    return at
 }
 
 @(private = "file")
-_nearest_selectable_walk :: proc(n: ^Node, x, y: f32, best: ^^Node, best_distance: ^f32) {
-    if n == nil || n.freed do return
-    if node.is_selectable(n) {
-        lx, ly := hit_test.to_local(n, x, y)
-        dx, dy: f32
-        if lx < n.rect.x {
-            dx = n.rect.x - lx
-        } else if lx > n.rect.x + n.rect.w {
-            dx = lx - (n.rect.x + n.rect.w)
-        }
-        if ly < n.rect.y {
-            dy = n.rect.y - ly
-        } else if ly > n.rect.y + n.rect.h {
-            dy = ly - (n.rect.y + n.rect.h)
-        }
-        distance := dx * dx + dy * dy
-        if distance < best_distance^ {
-            best^ = n
-            best_distance^ = distance
-        }
+_holds_selectable :: proc(n: ^Node, x, y: f32, anchor: ^Node) -> bool {
+    if n == nil || n.freed || node.is_hidden(n) do return false
+    // A pointer outside a clip must not land on text inside it, unless the drag started in there.
+    if !hit_test.clip_contains(n, x, y) && !_belongs_to(n, anchor) do return false
+    if node.is_selectable(n) do return true
+    for child in n.children {
+        if _holds_selectable(child, x, y, anchor) do return true
     }
-    for child in n.children do _nearest_selectable_walk(child, x, y, best, best_distance)
+    return false
+}
+
+@(private = "file")
+_distance :: proc(n: ^Node, x, y: f32) -> f32 {
+    lx, ly := hit_test.to_local(n, x, y)
+    dx := max(n.rect.x - lx, lx - (n.rect.x + n.rect.w), 0)
+    dy := max(n.rect.y - ly, ly - (n.rect.y + n.rect.h), 0)
+    return dx * dx + dy * dy
 }
 
 @(private = "file")

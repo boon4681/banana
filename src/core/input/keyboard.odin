@@ -25,6 +25,10 @@ on_key_down :: proc(im: ^Input_State, code: events.Key, key: rune, mods: events.
     s := dispatch(im.focused, events.KEY_DOWN_EVENT, &ev)
     if s.cancelled do return
 
+    if code == .Tab && !_accel(mods) && .Alt not_in mods {
+        if focus_step(im, .Shift in mods) do return
+    }
+
     if _accel(mods) && !repeat {
         #partial switch code {
         case .C:

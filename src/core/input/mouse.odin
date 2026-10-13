@@ -90,17 +90,7 @@ on_mouse_down :: proc(im: ^Input_State, button: int, mods: events.Mods = {}) {
     result := dispatch(target, events.MOUSE_DOWN_EVENT, &ev)
     down_cancelled := result.cancelled
 
-    if button == 0 && !down_cancelled && target != im.focused {
-        if im.focused != nil {
-            be := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
-            dispatch(im.focused, events.BLUR_EVENT, &be)
-        }
-        im.focused = target
-        if target != nil {
-            fe := events.Mouse_Event{x = im.mouse_x, y = im.mouse_y, button = button, mods = im.mods}
-            dispatch(target, events.FOCUS_EVENT, &fe)
-        }
-    }
+    if button == 0 && !down_cancelled do focus(im, focus_target(target))
 
     if button == 0 && !down_cancelled && im.captured == nil {
         selection_begin(im, im.mouse_x, im.mouse_y, time.tick_now())

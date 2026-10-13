@@ -9,6 +9,7 @@ Input_State :: struct {
     hovered:  ^Node, // node currently under the cursor
     pressed:  ^Node, // node the last mousedown landed on
     focused:  ^Node, // node holding keyboard focus
+    focus_visible: bool, // focus arrived by keyboard
     captured: ^Node, // node grabbing all pointer events (drag), or nil
     mouse_x:  f32,
     mouse_y:  f32,
