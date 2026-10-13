@@ -78,6 +78,7 @@ flush :: proc(budget := DEFAULT_BUDGET) -> (stats: Flush_Stats) {
 
     _flushing = false
     stats.remaining = len(_queue)
+    if stats.remaining == 0 do _release_retired()
     return
 }
 

@@ -69,6 +69,9 @@ _untracked: bool
 @(private="file", thread_local)
 _write_version: u64
 
+@(private="file", thread_local)
+_epoch: u64
+
 @(private)
 _is_effect :: proc(kind: Kind) -> bool {
     return kind == .Pre_Effect || kind == .User_Effect
@@ -348,7 +351,12 @@ _run :: proc(id: Node_Id) {
     }
 }
 
+graph_epoch :: proc() -> u64 {
+    return _epoch
+}
+
 free_graph :: proc() {
+    _epoch += 1
     for n, slot in _slots {
         if n.alive do _destroy(Node_Id{u32(slot), n.gen})
     }
@@ -358,6 +366,9 @@ free_graph :: proc() {
         delete(n.children)
         free(n)
     }
+    _release_retired()
+    delete(_retired)
+    _retired = nil
     delete(_slots)
     delete(_free_slots)
     delete(_queue)

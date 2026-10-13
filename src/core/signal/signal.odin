@@ -1,11 +1,15 @@
 package signal
 
 import "base:intrinsics"
+import "base:runtime"
+import "core:slice"
+import "core:strings"
 
 Source :: struct($T: typeid) {
-    id:     Node_Id,
-    value:  T,
-    equals: proc(a, b: T) -> bool,
+    id:        Node_Id,
+    value:     T,
+    equals:    proc(a, b: T) -> bool,
+    allocator: runtime.Allocator,
 }
 
 Derived :: struct($T: typeid) {
@@ -24,13 +28,49 @@ Effect :: struct {
     _cleanup: proc(e: ^Effect),
 }
 
+@(private)
+_Retired :: struct {
+    memory:    rawptr,
+    allocator: runtime.Allocator,
+}
+
+@(private, thread_local)
+_retired: [dynamic]_Retired
+
 state :: proc(initial: $T) -> ^Source(T) {
     s := new(Source(T))
-    s.value = initial
+    s.allocator = context.allocator
+    s.value = _own(initial, s.allocator)
     s.id = _alloc(.Source, s, nil, proc(owner: rawptr) {
-            free(cast(^Source(T))owner)
+        s := cast(^Source(T))owner
+        _retire(s.value, s.allocator)
+        free(s)
     })
     return s
+}
+
+@(private)
+_own :: proc(value: $T, allocator: runtime.Allocator) -> T {
+    when T == string {
+        return strings.clone(value, allocator)
+    } else when intrinsics.type_is_slice(T) {
+        return slice.clone(value, allocator)
+    } else {
+        return value
+    }
+}
+
+@(private)
+_retire :: proc(value: $T, allocator: runtime.Allocator) {
+    when T == string || intrinsics.type_is_slice(T) {
+        if raw_data(value) != nil do append(&_retired, _Retired{raw_data(value), allocator})
+    }
+}
+
+@(private)
+_release_retired :: proc() {
+    for old in _retired do free(old.memory, old.allocator)
+    clear(&_retired)
 }
 
 derived :: proc(fn: proc(ctx: rawptr) -> $T, ctx: rawptr = nil) -> ^Derived(T) {
@@ -76,9 +116,9 @@ Effect_With_Deps :: struct {
 // Re-runs when any dependency changes.
 effect_with_deps :: proc(ewd: ^Effect_With_Deps) -> ^Effect {
     return effect(proc(e: ^Effect) {
-            wc := cast(^Effect_With_Deps)e.ctx
-            for d in wc.deps do _track(d)
-            wc.fn(wc.ctx)
+        wc := cast(^Effect_With_Deps)e.ctx
+        for d in wc.deps do _track(d)
+        wc.fn(wc.ctx)
     }, ewd)
 }
 
@@ -146,7 +186,9 @@ source_peek :: proc(s: ^Source($T)) -> T {
 set :: proc(s: ^Source($T), value: T) {
     if s == nil do return
     if _same(s.equals, s.value, value) do return
-    s.value = value
+    old := s.value
+    s.value = _own(value, s.allocator)
+    _retire(old, s.allocator)
     _bump(s.id)
 }
 

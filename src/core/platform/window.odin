@@ -326,6 +326,7 @@ free :: proc(w: ^Window) {
     painter.free_state(w.painter_state, w.allocator)
     events.bus_destroy(&w.bus)
     eventloop.destroy(w.loop)
+    redraw.destroy(&w.redraw_state)
     runtime.mem_free(w)
 
     if prev != w {
