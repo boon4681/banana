@@ -46,8 +46,13 @@ _make_current :: proc() {
 }
 
 @(private="file")
-_clear :: proc(target: Render_Target, color: common.Color) {
+_clear :: proc(target: Render_Target, color: common.Color, scissor: Maybe(common.Rect) = nil) {
     panic("banana render backend 'nil': clear()")
+}
+
+@(private="file")
+_retained :: proc() -> bool {
+    return false
 }
 
 @(private="file")
@@ -216,7 +221,25 @@ _stencil_pop_clip :: proc() {
     panic("banana render backend 'nil': stencil_pop_clip()")
 }
 
+@(private="file")
+_layer_begin :: proc(target: Render_Target) -> int {
+    panic("banana render backend 'nil': layer_begin()")
+}
+
+@(private="file")
+_layer_end :: proc(parent: Render_Target, token: int) {
+    panic("banana render backend 'nil': layer_end()")
+}
+
+@(private="file")
+_draw_effect :: proc(target: Render_Target, source: Texture, vertices: [4]Vertex, effect: Effect, scissor: Maybe(common.Rect), blend: Blend_Mode) {
+    panic("banana render backend 'nil': draw_effect()")
+}
+
 RENDERER_NIL :: Renderer {
+    layer_begin           = _layer_begin,
+    layer_end             = _layer_end,
+    draw_effect           = _draw_effect,
     create_state          = _create_state,
     free_state            = _free_state,
     init                  = _init,
@@ -225,6 +248,7 @@ RENDERER_NIL :: Renderer {
     set_active_state      = _set_active_state,
     make_current          = _make_current,
     clear                 = _clear,
+    retained              = _retained,
     present               = _present,
     draw                  = _draw,
     draw_mesh             = _draw_mesh,

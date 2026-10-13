@@ -3,25 +3,61 @@ package render
 import "src:core/common"
 import "base:runtime"
 
-when ODIN_OS == .JS {
-    Vertex :: struct {
-        pos:   [2]f32,
-        uv:    [2]f32,
-        color: common.Color,
-    }
-} else {
-    Vertex :: struct {
-        pos:   [2]f32,
-        uv:    [2]f32,
-        color: common.Color,
-        mode:  Vertex_Mode,
-    }
+Vertex :: struct {
+    pos:   [2]f32,
+    uv:    [2]f32,
+    color: common.Color,
+    mode:  Vertex_Mode,
 }
 
 Vertex_Mode :: enum u32 {
     Solid,
     Texture,
     MSDF,
+    Round,
+    Edge,
+    Edge_Texture,
+    Shadow,
+}
+
+Clip_Edge :: struct {
+    to_local: common.Mat3x3,
+    size:     [2]f32,
+    radius:   common.Radii,
+}
+
+MAX_CLIP_EDGES  :: 4
+MAX_EFFECT_TAPS :: 24
+
+@(thread_local)
+clip_edges: [MAX_CLIP_EDGES]Clip_Edge
+
+@(thread_local)
+clip_edge_count: int
+
+// The innermost MAX_CLIP_EDGES entries are antialiased; outer ones only clip.
+set_clip_edges :: proc(edges: []Clip_Edge) {
+    first := max(len(edges) - MAX_CLIP_EDGES, 0)
+    clip_edge_count = copy(clip_edges[:], edges[first:])
+}
+
+Effect :: struct {
+    color:  [4][4]f32,
+    offset: [4]f32,
+    step:   [2]f32,
+    taps:   int,
+    sigma:  f32,
+    tint:   [4]f32,
+    shadow: bool,
+}
+
+EFFECT_COPY :: Effect{
+    color = {
+        {1, 0, 0, 0},
+        {0, 1, 0, 0},
+        {0, 0, 1, 0},
+        {0, 0, 0, 1}
+    }
 }
 
 // Vertex for the GPU glyph pipeline: `uv` is an em-space position and the curve fields window into the quadratic
@@ -64,8 +100,9 @@ Renderer :: struct #all_or_none {
     set_active_state: proc(state: rawptr),
     make_current:     proc(), // Call after set_active_state when switching windows.
 
-    clear:   proc(target: Render_Target, color: common.Color),
-    present: proc(),
+    clear:    proc(target: Render_Target, color: common.Color, scissor: Maybe(common.Rect) = nil),
+    present:  proc(),
+    retained: proc() -> bool, // The screen keeps the last frame's pixels, so the next one may draw only part of it.
 
     draw: proc(
 		target:   Render_Target,
@@ -166,6 +203,20 @@ Renderer :: struct #all_or_none {
     stencil_push_clip: proc(),
     stencil_use_clip:  proc(),
     stencil_pop_clip:  proc(),
+
+    // Each target has its own stencil buffer but the clip depth is one counter,
+    // so entering a layer saves it in `token` and leaving puts it back.
+    layer_begin: proc(target: Render_Target) -> (token: int),
+    layer_end:   proc(parent: Render_Target, token: int),
+
+    draw_effect: proc(
+        target:   Render_Target,
+        source:   Texture,
+        vertices: [4]Vertex,
+        effect:   Effect,
+        scissor:  Maybe(common.Rect),
+        blend:    Blend_Mode,
+    ),
 }
 
 CONFIG_RENDERER_NAME :: #config(banana_RENDER_BACKEND, "")
