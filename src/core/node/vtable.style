@@ -1,4 +1,5 @@
-﻿// <name>          :: <type_value>
+// <name> :: <type_value>[, <type_value>]
+// Names are CSS property names with `_` for `-`.
 z_index         :: i32
 direction       :: Direction
 flex_direction  :: FlexDirection
@@ -6,20 +7,24 @@ justify_content :: Justify
 align_content   :: Align
 align_items     :: Align
 align_self      :: Align
-position_type   :: Position
-wrap            :: Wrap
+justify_items   :: Align
+justify_self    :: Align
+position        :: Position
+flex_wrap       :: Wrap
 display         :: Display
-select_mode     :: User_Select
+user_select     :: User_Select
 pointer_events  :: Pointer_Events
+visibility      :: Keyword
 overflow        :: Overflow
 overflow_x      :: Overflow
 overflow_y      :: Overflow
 box_sizing      :: BoxSizing
+cursor          :: Keyword
+opacity         :: f32
 flex            :: f32
 flex_grow       :: f32
 flex_shrink     :: f32
 aspect_ratio    :: f32
-// <name>          :: <type_value>, <type_value>
 width           :: f32, u: unit = px
 height          :: f32, u: unit = px
 min_width       :: f32, u: unit = px
@@ -27,47 +32,87 @@ min_height      :: f32, u: unit = px
 max_width       :: f32, u: unit = px
 max_height      :: f32, u: unit = px
 flex_basis      :: f32, u: unit = px
-margin_left     :: f32, u: unit = px
-margin_top      :: f32, u: unit = px
-margin_right    :: f32, u: unit = px
-margin_bottom   :: f32, u: unit = px
-margin_start    :: f32, u: unit = px
-margin_end      :: f32, u: unit = px
-margin_x        :: f32, u: unit = px
-margin_y        :: f32, u: unit = px
-margin_all      :: f32, u: unit = px
-padding_left    :: f32, u: unit = px
-padding_top     :: f32, u: unit = px
-padding_right   :: f32, u: unit = px
-padding_bottom  :: f32, u: unit = px
-padding_start   :: f32, u: unit = px
-padding_end     :: f32, u: unit = px
-padding_x       :: f32, u: unit = px
-padding_y       :: f32, u: unit = px
-padding_all     :: f32, u: unit = px
-position_left   :: f32, u: unit = px
-position_top    :: f32, u: unit = px
-position_right  :: f32, u: unit = px
-position_bottom :: f32, u: unit = px
-position_start  :: f32, u: unit = px
-position_end    :: f32, u: unit = px
-position_x      :: f32, u: unit = px
-position_y      :: f32, u: unit = px
-position_all    :: f32, u: unit = px
-border_left     :: f32
-border_top      :: f32
-border_right    :: f32
-border_bottom   :: f32
-border_start    :: f32
-border_end      :: f32
-border_x        :: f32
-border_y        :: f32
-border_all      :: f32
-gap_column      :: f32, u: unit = px
-gap_row         :: f32, u: unit = px
-gap_all         :: f32, u: unit = px
-color           :: Color
-font_size       :: f32
-line_height     :: f32, u: unit = px
-font            :: ^Font
-font_weight     :: FontWeight
+margin_top          :: f32, u: unit = px
+margin_right        :: f32, u: unit = px
+margin_bottom       :: f32, u: unit = px
+margin_left         :: f32, u: unit = px
+margin_inline_start :: f32, u: unit = px
+margin_inline_end   :: f32, u: unit = px
+margin_inline       :: f32, u: unit = px
+margin_block        :: f32, u: unit = px
+margin              :: f32, u: unit = px
+padding_top          :: f32, u: unit = px
+padding_right        :: f32, u: unit = px
+padding_bottom       :: f32, u: unit = px
+padding_left         :: f32, u: unit = px
+padding_inline_start :: f32, u: unit = px
+padding_inline_end   :: f32, u: unit = px
+padding_inline       :: f32, u: unit = px
+padding_block        :: f32, u: unit = px
+padding              :: f32, u: unit = px
+top                :: f32, u: unit = px
+right              :: f32, u: unit = px
+bottom             :: f32, u: unit = px
+left               :: f32, u: unit = px
+inset_inline_start :: f32, u: unit = px
+inset_inline_end   :: f32, u: unit = px
+inset_inline       :: f32, u: unit = px
+inset_block        :: f32, u: unit = px
+inset              :: f32, u: unit = px
+border_top_width          :: f32
+border_right_width        :: f32
+border_bottom_width       :: f32
+border_left_width         :: f32
+border_inline_start_width :: f32
+border_inline_end_width   :: f32
+border_inline_width       :: f32
+border_block_width        :: f32
+border_width              :: f32
+border_top_style    :: Keyword
+border_right_style  :: Keyword
+border_bottom_style :: Keyword
+border_left_style   :: Keyword
+border_style        :: Keyword
+border_top_color    :: Color
+border_right_color  :: Color
+border_bottom_color :: Color
+border_left_color   :: Color
+border_color        :: Color
+border_top_left_radius     :: [2]f32
+border_top_right_radius    :: [2]f32
+border_bottom_right_radius :: [2]f32
+border_bottom_left_radius  :: [2]f32
+border_radius              :: Radii
+row_gap    :: f32, u: unit = px
+column_gap :: f32, u: unit = px
+gap        :: f32, u: unit = px
+color            :: Color
+background_color :: Color
+font_size        :: f32
+line_height      :: f32, u: unit = px
+font             :: ^Font
+font_weight      :: FontWeight
+text_align           :: Keyword
+text_transform       :: Keyword
+white_space          :: Keyword
+text_decoration_line :: Keyword
+text_overflow        :: Keyword
+letter_spacing       :: f32
+translate_x        :: f32, u: unit = px
+translate_y        :: f32, u: unit = px
+rotate             :: f32
+scale_x            :: f32
+scale_y            :: f32
+transform_origin_x :: f32, u: unit = px
+transform_origin_y :: f32, u: unit = px
+outline_width  :: f32
+outline_style  :: Keyword
+outline_color  :: Color
+outline_offset :: f32
+scrollbar_width       :: Keyword
+scrollbar_thumb_color :: Color
+scrollbar_track_color :: Color
+grid_column_start :: i32
+grid_column_end   :: i32
+grid_row_start    :: i32
+grid_row_end      :: i32
