@@ -33,6 +33,12 @@ sel_range :: proc(s: Selection) -> (start, end: int) {
 Layout_Metrics :: struct {
     line_height: f32,
     max_w: f32,
+    align: f32, // share of a line's free width placed before it: 0 left, 0.5 center, 1 right
+}
+
+line_offset :: proc(l: Line, m: Layout_Metrics) -> f32 {
+    if m.align <= 0 || m.max_w <= l.width do return 0
+    return (m.max_w - l.width) * m.align
 }
 
 @(private = "file")
@@ -150,7 +156,7 @@ position_at_point :: proc(st: ^Shaped_Text, lines: []Line, m: Layout_Metrics, x,
     if len(lines) == 0 do return {0, false}
     li := int(y / max(m.line_height, 0.0001))
     li = _line_of(lines, li)
-    return position_in_line(st, lines[li], x)
+    return position_in_line(st, lines[li], x - line_offset(lines[li], m))
 }
 
 Highlight_Rect :: struct {
@@ -188,16 +194,17 @@ selection_rects :: proc(
         }
         if len(spans) > 0 {
             slice.sort_by(spans[:], proc(a, b: [2]f32) -> bool { return a[0] < b[0] })
+            offset := line_offset(l, m)
             cur := spans[0]
             for s in spans[1:] {
                 if s[0] <= cur[1] + 0.001 {
                     cur[1] = max(cur[1], s[1])
                     continue
                 }
-                append(&out, Highlight_Rect{cur[0], y, cur[1] - cur[0], m.line_height})
+                append(&out, Highlight_Rect{cur[0] + offset, y, cur[1] - cur[0], m.line_height})
                 cur = s
             }
-            append(&out, Highlight_Rect{cur[0], y, cur[1] - cur[0], m.line_height})
+            append(&out, Highlight_Rect{cur[0] + offset, y, cur[1] - cur[0], m.line_height})
         }
         y += m.line_height
     }

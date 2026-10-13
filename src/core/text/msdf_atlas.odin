@@ -4,6 +4,7 @@ import "core:c"
 import "core:math"
 import "core:slice"
 import "src:core/common"
+import "src:core/redraw"
 import MSDF "src:msdfgen"
 
 MSDF_ATLAS_SIZE     :: #config(BANANA_MSDF_ATLAS_INITIAL, 1024)
@@ -140,6 +141,9 @@ _grow_atlas :: proc(required: int = 0) -> bool {
         _copy_atlas_rows(pixels, next, _msdf_pixels, _msdf_size)
         delete(_msdf_pixels)
     }
+
+    redraw.mark()
+    redraw.again()
 
     _msdf_pixels = pixels
     _msdf_size = next
