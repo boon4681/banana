@@ -82,6 +82,11 @@ _pending :: proc(self: ^Loop) -> int {
     return len(self.timers)
 }
 
+next_due :: proc(l: ^Loop) -> (deadline: time.Tick, ok: bool) {
+    if l == nil || len(l.timers) == 0 do return {}, false
+    return l.timers[0].deadline, true
+}
+
 @(private = "file")
 _update :: proc(self: ^Loop, now: Maybe(time.Tick) = nil, budget := DEFAULT_BUDGET) {
     if len(self.timers) == 0 do return
