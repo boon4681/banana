@@ -116,3 +116,6 @@ grid_column_start :: i32
 grid_column_end   :: i32
 grid_row_start    :: i32
 grid_row_end      :: i32
+sticky        :: Maybe(Sticky)
+filter        :: Maybe(Filter)
+corner_radius :: Radii

@@ -119,6 +119,9 @@ Style_VTable :: struct #all_or_none {
     get_grid_column_end:            proc(self: ^Style) -> i32,
     get_grid_row_start:             proc(self: ^Style) -> i32,
     get_grid_row_end:               proc(self: ^Style) -> i32,
+    get_sticky:                     proc(self: ^Style) -> Maybe(Sticky),
+    get_filter:                     proc(self: ^Style) -> Maybe(Filter),
+    get_corner_radius:              proc(self: ^Style) -> Radii,
 
     set_z_index:                    proc(self: ^Style, v: i32) -> ^Style,
     set_direction:                  proc(self: ^Style, v: Direction) -> ^Style,
@@ -236,4 +239,7 @@ Style_VTable :: struct #all_or_none {
     set_grid_column_end:            proc(self: ^Style, v: i32) -> ^Style,
     set_grid_row_start:             proc(self: ^Style, v: i32) -> ^Style,
     set_grid_row_end:               proc(self: ^Style, v: i32) -> ^Style,
+    set_sticky:                     proc(self: ^Style, v: Maybe(Sticky)) -> ^Style,
+    set_filter:                     proc(self: ^Style, v: Maybe(Filter)) -> ^Style,
+    set_corner_radius:              proc(self: ^Style, v: Radii) -> ^Style,
 }
