@@ -37,12 +37,12 @@ _end_frame :: proc(p: Painter) {
 }
 
 @(private="file")
-_rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 = 0) {
+_rect :: proc(p: Painter, r: common.Rect, color: common.Color, radius: common.Radii = 0) {
     panic("nil painter")
 }
 
 @(private="file")
-_border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0) {
+_border :: proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: common.Radii = 0) {
     panic("nil painter")
 }
 
@@ -92,7 +92,7 @@ _pixel_scale :: proc(p: Painter) -> [2]f32 {
 }
 
 @(private="file")
-_push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode) {
+_push_clip :: proc(p: Painter, r: common.Rect, mode: ClipMode, radius: common.Radii = 0) {
     panic("nil painter")
 }
 
@@ -111,6 +111,26 @@ _pop_transform :: proc(p: Painter) {
     panic("nil painter")
 }
 
+@(private="file")
+_push_layer :: proc(p: Painter, bounds: common.Rect, f: common.EffectFilter) {
+    panic("nil painter")
+}
+
+@(private="file")
+_pop_layer :: proc(p: Painter) {
+    panic("nil painter")
+}
+
+@(private="file")
+_shadow :: proc(p: Painter, r: common.Rect, radius: common.Radii, s: common.EffectShadow, alpha: f32 = 1) {
+    panic("nil painter")
+}
+
+@(private="file")
+_gradient :: proc(p: Painter, r: common.Rect, radius: common.Radii, g: common.Gradient, alpha: f32 = 1) {
+    panic("nil painter")
+}
+
 PAINTER_NIL :: Painter_Interface {
     create_state   = _create_state,
     free_state     = _free_state,
@@ -120,6 +140,10 @@ PAINTER_NIL :: Painter_Interface {
     end_frame      = _end_frame,
     rect           = _rect,
     border         = _border,
+    push_layer     = _push_layer,
+    pop_layer      = _pop_layer,
+    shadow         = _shadow,
+    gradient       = _gradient,
     image          = _image,
     line           = _line,
     triangles      = _triangles,

@@ -64,8 +64,10 @@ Painter_Interface :: struct #all_or_none {
     begin_frame: proc(p: Painter, color: common.Color),
     end_frame:   proc(p: Painter),
 
-    rect:          proc(p: Painter, r: common.Rect, color: common.Color, radius: f32 = 0),
-    border:        proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: f32 = 0),
+    rect:          proc(p: Painter, r: common.Rect, color: common.Color, radius: common.Radii = 0),
+    border:        proc(p: Painter, r: common.Rect, color: common.Color, width: f32, radius: common.Radii = 0),
+    shadow:        proc(p: Painter, r: common.Rect, radius: common.Radii, s: common.EffectShadow, alpha: f32 = 1),
+    gradient:      proc(p: Painter, r: common.Rect, radius: common.Radii, g: common.Gradient, alpha: f32 = 1),
     image:         proc(p: Painter, image: ^render.Image, dst: common.Rect, tint := common.Color{255, 255, 255, 255}),
     line:          proc(p: Painter, a, b: [2]f32, color: common.Color, width: f32),
     triangles:     proc(p: Painter, points: [][2]f32, indices: []u32, color: common.Color),  // Draws an indexed, solid-color triangle mesh. This is the low-level path used by vector assets such as SVG; positions are in layout coordinates.
@@ -78,8 +80,10 @@ Painter_Interface :: struct #all_or_none {
 	// Device px per local px under the current transform stack; lets text snap
 	// baselines to physical pixels at fractional display scales.
     pixel_scale:    proc(p: Painter) -> [2]f32,
-    push_clip:      proc(p: Painter, r: common.Rect, mode: ClipMode),
+    push_clip:      proc(p: Painter, r: common.Rect, mode: ClipMode, radius: common.Radii = 0),
     pop_clip:       proc(p: Painter),
     push_transform: proc(p: Painter, t: common.Transform, at: [2]f32), 	// `at` is the node's absolute origin; t.origin pivots relative to it.
     pop_transform:  proc(p: Painter),
+    push_layer:     proc(p: Painter, bounds: common.Rect, f: common.EffectFilter),
+    pop_layer:      proc(p: Painter),
 }
