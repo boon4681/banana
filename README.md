@@ -8,9 +8,16 @@ So banana emit odin with Context object and passing it around to every function 
 Security? - f*ck that who cares.
 - In this current stage of the project just drop security.
 
+### Preview App
+
+<center>
+<img width="300px" src="https://raw.githubusercontent.com/boon4681/banana/refs/heads/main/resources/preview.png" alt="demo"/>
+</center>
+
+
 ### Goal
 
-Banana doesn't try to replace odin just a language to write together. UI is hard and when you do a lot of context and state, its kinda annoy to work with.
+Banana doesn't try to replace odin, its just a language to write together. UI is hard and when you do a lot of context and state, its kinda annoy to work with.
 
 ### Why not Clay lib?
 
@@ -18,7 +25,9 @@ First when i start this project i didn't know clay existed, im too disconnected 
 
 ### Why use odin?
 
-Cuz i just want a language ready to go, rust is just a pain in the ass slow shit and rust-analyzer is slow as f*ck, and i need to use a lot of c-lib and rust is not gonna cut it with their unsafe pain that ghost me.
+Cuz i just want a language ready to go, rust is just a pain in the ass to write and rust-analyzer is slow as f*ck, and i need to use a lot of c-lib and rust is not gonna cut it with their unsafe pain that ghost me.
+
+Who argue that rust is not hard to write, ok smart guy thank for the opinion but i dont care.
 
 Golang? too painful to use with c-lib.
 
