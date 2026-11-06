@@ -2,6 +2,7 @@
 package inspector
 
 import "base:intrinsics"
+import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -63,6 +64,7 @@ Inspector :: struct {
     ready:     ^Snapshot,
     read:      ^Snapshot,
     has_ready: bool,
+    commands:  [dynamic]Command,
 
     want_snapshot: u32,
     pick_mode:     u32,
@@ -201,13 +203,16 @@ update :: proc(insp: ^Inspector) {
     hover_node := _resolve(app.root, insp.overlay.root, hover_id)
     if hover_id != 0 && hover_node == nil do intrinsics.atomic_store(&insp.hover_id, Node_Id(0))
 
-    insp.overlay.paint.hover = metrics_of(hover_node)
+    hover := metrics_of(hover_node)
+    if insp.overlay.paint.hover != hover do insp.overlay.paint->damage()
+    insp.overlay.paint.hover = hover
     if hover_node != nil {
         overlay_set_tip(&insp.overlay, _label(hover_node), metrics_of(hover_node), viewport)
     } else {
         overlay_set_tip(&insp.overlay, "", {}, viewport)
     }
 
+    run_commands(insp)
     if intrinsics.atomic_exchange(&insp.want_snapshot, 0) == 1 {
         capture(insp.write, app.root, insp.overlay.root)
         insp.write.viewport = viewport
@@ -235,8 +240,24 @@ acquire :: proc(insp: ^Inspector) -> (snap: ^Snapshot, fresh: bool) {
 @(private)
 _label :: proc(n: ^node.BaseNode) -> string {
     if n == nil do return ""
-    if n.key == "" do return type_name(n)
-    return _join(type_name(n), "#", n.key)
+    name, classes := type_name(n), ""
+    if node.describe != nil {
+        if description, ok := node.describe(n); ok {
+            if description.tag != "" do name = description.tag
+            classes = description.classes
+        }
+    }
+    out := strings.builder_make(context.temp_allocator)
+    strings.write_string(&out, name)
+    if n.key != "" {
+        strings.write_string(&out, "#")
+        strings.write_string(&out, n.key)
+    }
+    for class in strings.fields(classes, context.temp_allocator) {
+        strings.write_string(&out, ".")
+        strings.write_string(&out, class)
+    }
+    return strings.to_string(out)
 }
 
 @(private = "file")
@@ -248,11 +269,12 @@ _join :: proc(a, b, c: string) -> string {
     return string(out)
 }
 
-@(private = "file")
+@(private)
 _resolve :: proc(n: ^node.BaseNode, skip: ^node.BaseNode, want: Node_Id) -> ^node.BaseNode {
     if n == nil || n.freed || n == skip || want == 0 do return nil
     if Node_Id(uintptr(n)) == want do return n
-    for c in n.children {
+    if n.structural do return nil
+    for c in n._internal_children {
         if hit := _resolve(c, skip, want); hit != nil do return hit
     }
     return nil

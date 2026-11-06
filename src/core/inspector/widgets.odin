@@ -20,8 +20,12 @@ TAG              :: Color{93, 176, 215, 255}
 ATTR             :: Color{155, 187, 220, 255}
 VALUE            :: Color{242, 151, 102, 255}
 ACCENT           :: Color{138, 180, 248, 255}
+COMPONENT        :: Color{129, 201, 149, 255}
+BLOCK            :: Color{197, 138, 249, 255}
+GUIDE            :: Color{255, 255, 255, 18}
 ROW_HOVER        :: Color{53, 54, 58, 255}
 ROW_SELECT       :: Color{29, 60, 97, 255}
+ROW_MATCH        :: Color{92, 78, 22, 255}
 BTN_ON           :: Color{26, 115, 232, 255}
 BTN_HOVER        :: Color{55, 56, 60, 255}
 
@@ -41,7 +45,7 @@ FONT_SIZE        :: f32(11)
 FONT_SIZE_SM     :: f32(10)
 
 @(private = "file")
-ICON_PICKER_SVG :: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-square-dashed-mouse-pointer-icon lucide-square-dashed-mouse-pointer"><path d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z"/><path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h2"/><path d="M14 3h1"/><path d="M3 9v1"/><path d="M21 9v2"/><path d="M3 14v1"/></svg>`
+ICON_PICKER_SVG :: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-square-dashed-mouse-pointer"><path d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z"></path><path d="M5 3a2 2 0 0 0-2 2"></path><path d="M19 3a2 2 0 0 1 2 2"></path><path d="M5 21a2 2 0 0 1-2-2"></path><path d="M9 3h1"></path><path d="M9 21h2"></path><path d="M14 3h1"></path><path d="M3 9v1"></path><path d="M21 9v2"></path><path d="M3 14v1"></path></svg>`
 
 Label :: struct {
     root: ^node.Node,
@@ -73,7 +77,7 @@ row_box :: proc(key: string = "") -> ^box.Box {
     b := box.New({}, key)
     b->style()->
         set_flex_direction(.Row)->
-        set_wrap(.NoWrap)->
+        set_flex_wrap(.NoWrap)->
         set_align_items(.Center)->
         set_flex_shrink(0)
     return b
@@ -88,7 +92,7 @@ spacer :: proc() -> ^node.Node {
 divider :: proc(vertical: bool) -> ^box.Box {
     d := box.New({background = LINE})
     if vertical {
-        d->style()->set_width(1)->set_height(16)->set_flex_shrink(0)->set_margin_x(4)
+        d->style()->set_width(1)->set_height(16)->set_flex_shrink(0)->set_margin_inline(4)
     } else {
         d->style()->set_height(1)->set_width(100, node.percent)->set_flex_shrink(0)
     }
@@ -121,7 +125,7 @@ frame_box :: proc(fill, outline: Color, key: string = "") -> ^Frame_Box {
     n.outline = outline
     n.draw = transmute(proc(self: ^node.BaseNode))_frame_draw
     n.on_free = transmute(proc(self: ^node.BaseNode))_frame_free
-    n->style()->set_flex_direction(.Column)->set_align_items(.Stretch)->set_wrap(.NoWrap)
+    n->style()->set_flex_direction(.Column)->set_align_items(.Stretch)->set_flex_wrap(.NoWrap)
     return n
 }
 

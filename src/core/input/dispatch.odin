@@ -3,6 +3,7 @@ package input
 import "src:core/events"
 import "src:core/hit_test"
 
+// sends an event through tree, invoking the affected event listeners in the appropriate order
 dispatch :: proc(target: ^Node, type: string, data: rawptr = nil) -> events.Event_Signal {
 	state := _active_input_state
 	window_bus: ^events.Bus
@@ -37,7 +38,7 @@ dispatch :: proc(target: ^Node, type: string, data: rawptr = nil) -> events.Even
 
 	chain := hit_test.ancestor_chain(target)
 
-	// Capture: root -> target's parent.
+	// capture goes from the root down to the target's parent
 	s.phase = .Capture
 	for i in 0 ..< len(chain) - 1 {
 		n := chain[i]
@@ -46,13 +47,12 @@ dispatch :: proc(target: ^Node, type: string, data: rawptr = nil) -> events.Even
 		if s.propagation_stopped do return s
 	}
 
-	// Target.
 	s.phase = .Target
 	s.current_target = target
 	if !events.emit_local(&target.bus, &s) do return s
 	if s.propagation_stopped do return s
 
-	// Bubble: target's parent -> root.
+	// bubble goes back up from the target's parent to the root
 	s.phase = .Bubble
 	for i := len(chain) - 2; i >= 0; i -= 1 {
 		n := chain[i]

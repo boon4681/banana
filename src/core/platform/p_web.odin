@@ -5,8 +5,10 @@ import "base:runtime"
 import "core:fmt"
 import "core:unicode/utf8"
 import "core:strings"
+import "core:time"
 import js "core:sys/wasm/js"
 import "src:core/events"
+import "src:core/input/mouse"
 import "src:core/render"
 import webgl "vendor:wasm/WebGL"
 
@@ -55,8 +57,8 @@ _free_state :: proc(state: rawptr, allocator: runtime.Allocator) {
 
 @(private = "file")
 _init :: proc(
-	state: rawptr,
-	opts: Init_Options,
+	state:     rawptr,
+	opts:      Init_Options,
 	allocator: runtime.Allocator,
 ) -> render.Render_Interface {
     _active = cast(^Web_State)(state)
@@ -254,6 +256,8 @@ _pointer_callback :: proc(e: js.Event) {
     #partial switch e.kind {
     case .Pointer_Move:
         _push_event(w, MOUSE_MOVED{x = x, y = y})
+        // The browser's movement, which keeps its pointer acceleration outside pointer lock.
+        if mouse.wanted() do mouse.push(f64(e.mouse.movement.x), f64(e.mouse.movement.y), time.tick_now())
     case .Pointer_Leave:
         _push_event(w, MOUSE_LEFT{})
     case .Pointer_Down:

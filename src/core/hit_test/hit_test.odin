@@ -75,19 +75,19 @@ hit_flow :: proc(n: ^Node, inverse: common.Mat3x3, invertible: bool, x, y: f32, 
 transformed_contains :: proc(n: ^Node, inverse: common.Mat3x3, invertible: bool, x, y: f32) -> bool {
     if !invertible do return false
     p := common.transform_point(inverse, {x, y})
-    return common.rect_intersect(n.rect, p.x, p.y)
+    return common.rounded_rect_contains(n.rect, n.corner_radius, p.x, p.y)
 }
 
 @(private)
 transformed_clip_contains :: proc(n: ^Node, inverse: common.Mat3x3, invertible: bool, x, y: f32) -> bool {
     if !invertible do return false
     p := common.transform_point(inverse, {x, y})
-    return common.rect_intersect(paint.clip_rect(n), p.x, p.y)
+    return common.rounded_rect_contains(node.Clip_Rect(n), n.clip_radius, p.x, p.y)
 }
 
 world_matrix :: proc(n: ^Node) -> common.Mat3x3 {
     if n == nil do return common.Mat3X3_IDENTITY
-    local := common.transform_at_matrix(n.transform, {n.rect.x, n.rect.y})
+    local := common.transform_at_matrix(node.Resolve_Transform(n),{n.rect.x, n.rect.y})
     return world_matrix(n.parent) * local
 }
 
@@ -96,6 +96,12 @@ to_local :: proc(n: ^Node, x, y: f32) -> (f32, f32) {
     if !invertible do return x, y
     p := common.transform_point(inverse, {x, y})
     return p.x, p.y
+}
+
+clip_contains :: proc(n: ^Node, x, y: f32) -> bool {
+    if n.clip_mode == .None do return true
+    lx, ly := to_local(n, x, y)
+    return common.rounded_rect_contains(node.Clip_Rect(n), n.clip_radius, lx, ly)
 }
 
 ancestor_chain :: proc(target: ^Node) -> []^Node {

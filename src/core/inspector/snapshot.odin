@@ -2,6 +2,7 @@
 package inspector
 
 import "base:runtime"
+import "core:strings"
 import "src:core/common"
 import "src:core/node"
 import YG "src:yoga"
@@ -23,9 +24,11 @@ Snap_Node :: struct {
     depth:       i32,
     child_count: i32,
 
-    name: Str,
-    key:  Str,
-    text: Str,
+    kind:    node.Describe_Kind,
+    name:    Str,
+    key:     Str,
+    classes: Str,
+    text:    Str,
 
     rect: common.Rect,
     margin:  [4]f32,
@@ -70,6 +73,7 @@ Snap_Node :: struct {
     stacking:  bool,
     transform: bool,
     text_like: bool,
+    text_cut:  bool,
 }
 
 Snapshot :: struct {
@@ -109,17 +113,41 @@ capture :: proc(snap: ^Snapshot, root: ^node.BaseNode, skip: ^node.BaseNode = ni
 }
 
 @(private = "file")
-_capture_node :: proc(snap: ^Snapshot, n: ^node.BaseNode, parent: i32, depth: i32, skip: ^node.BaseNode) {
-    if n == nil || n.freed || n == skip do return
+_capture_children :: proc(snap: ^Snapshot, n: ^node.BaseNode, parent: i32, depth: i32, skip: ^node.BaseNode) -> (rows: i32) {
+    for c in n.children if n.structural else n._internal_children {
+        if c == nil || c.freed || c == skip do continue
+        if !n.structural && c.owner != nil do continue
+        rows += _capture_node(snap, c, parent, depth, skip)
+    }
+    return
+}
+
+@(private = "file")
+_capture_node :: proc(snap: ^Snapshot, n: ^node.BaseNode, parent: i32, depth: i32, skip: ^node.BaseNode) -> (rows: i32) {
+    if n == nil || n.freed || n == skip do return 0
+
+    description: node.Description
+    if node.describe != nil do description, _ = node.describe(n)
+    if description.kind == .Transparent do return _capture_children(snap, n, parent, depth, skip)
+
+    name := description.tag
+    #partial switch description.kind {
+    case .If: name = "if"
+    case .Each: name = "each"
+    case .Render: name = "render"
+    }
+    if name == "" do name = "window" if parent < 0 else type_name(n)
 
     index := i32(len(snap.nodes))
     entry := Snap_Node {
-        id     = Node_Id(uintptr(n)),
-        parent = parent,
-        depth  = depth,
-        name   = snap_str(snap, type_name(n)),
-        key    = snap_str(snap, n.key),
-        rect   = n.rect,
+        id      = Node_Id(uintptr(n)),
+        parent  = parent,
+        depth   = depth,
+        kind    = description.kind,
+        name    = snap_str(snap, name),
+        key     = snap_str(snap, n.key),
+        classes = snap_str(snap, description.classes),
+        rect    = n.rect,
     }
 
     raw := n.raw
@@ -129,29 +157,31 @@ _capture_node :: proc(snap: ^Snapshot, n: ^node.BaseNode, parent: i32, depth: i3
 
     entry.z_index = n.z_index
     entry.stacking = n.creates_stacking_context
-    entry.transform = n.transform != common.IDENTITY_TRANSFORM
+    entry.transform = node.Resolve_Transform(n) != common.IDENTITY_TRANSFORM
     entry.clip_mode = n.clip_mode
 
     if n.text_content != nil && n.str != nil {
         entry.text_like = true
-        entry.text = snap_str(snap, _preview(n->str()))
+        full := n->str()
+        entry.text = snap_str(snap, _preview(full))
+        entry.text_cut = len(full) > TEXT_PREVIEW_MAX
     }
 
     if n._internal_style != nil {
         st := cast(^node.Style)n._internal_style
         entry.display = st->get_display()
-        entry.position_type = st->get_position_type()
+        entry.position_type = st->get_position()
         entry.flex_direction = st->get_flex_direction()
         entry.justify = st->get_justify_content()
         entry.align_items = st->get_align_items()
         entry.align_self = st->get_align_self()
         entry.align_content = st->get_align_content()
-        entry.wrap = st->get_wrap()
+        entry.wrap = st->get_flex_wrap()
         entry.box_sizing = st->get_box_sizing()
         entry.overflow_x = st->get_overflow_x()
         entry.overflow_y = st->get_overflow_y()
         entry.pointer_events = st->get_pointer_events()
-        entry.select_mode = st->get_select_mode()
+        entry.select_mode = st->get_user_select()
 
         entry.flex_grow = st->get_flex_grow()
         entry.flex_shrink = st->get_flex_shrink()
@@ -163,13 +193,13 @@ _capture_node :: proc(snap: ^Snapshot, n: ^node.BaseNode, parent: i32, depth: i3
         entry.max_width = _len(st->get_max_width())
         entry.max_height = _len(st->get_max_height())
         entry.inset = {
-            _len(st->get_position_left()),
-            _len(st->get_position_top()),
-            _len(st->get_position_right()),
-            _len(st->get_position_bottom()),
+            _len(st->get_left()),
+            _len(st->get_top()),
+            _len(st->get_right()),
+            _len(st->get_bottom()),
         }
-        entry.gap_row, _ = st->get_gap_row()
-        entry.gap_column, _ = st->get_gap_column()
+        entry.gap_row, _ = st->get_row_gap()
+        entry.gap_column, _ = st->get_column_gap()
         entry.aspect = st->get_aspect_ratio()
 
         entry.color = st->get_color()
@@ -179,14 +209,9 @@ _capture_node :: proc(snap: ^Snapshot, n: ^node.BaseNode, parent: i32, depth: i3
     }
 
     append(&snap.nodes, entry)
-
-    kids := i32(0)
-    for c in n.children {
-        if c == nil || c.freed || c == skip do continue
-        kids += 1
-        _capture_node(snap, c, index, depth + 1, skip)
-    }
-    snap.nodes[index].child_count = kids
+    child_count := _capture_children(snap, n, index, depth + 1, skip)
+    snap.nodes[index].child_count = child_count
+    return 1
 }
 
 @(private = "file")
@@ -214,6 +239,21 @@ type_name :: proc(n: ^node.BaseNode) -> string {
     named, ok := info.variant.(runtime.Type_Info_Named)
     if !ok do return "Node"
     return named.name
+}
+
+// An entry as a selector: `button#save.primary.wide`.
+selector_text :: proc(snap: ^Snapshot, entry: Snap_Node) -> string {
+    b := strings.builder_make(context.temp_allocator)
+    strings.write_string(&b, str(snap, entry.name))
+    if key := str(snap, entry.key); key != "" {
+        strings.write_byte(&b, '#')
+        strings.write_string(&b, key)
+    }
+    for class in strings.fields(str(snap, entry.classes), context.temp_allocator) {
+        strings.write_byte(&b, '.')
+        strings.write_string(&b, class)
+    }
+    return strings.to_string(b)
 }
 
 // Index of the entry carrying `id`, or -1.

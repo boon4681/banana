@@ -162,7 +162,7 @@ get :: proc {
     derived_get,
 }
 
-// read the value without subscribing whatever is running now
+// read the value without making the running effect depend on it
 peek :: proc {
     source_peek,
     derived_peek,
@@ -249,7 +249,7 @@ resume :: proc(e: ^Effect) {
     if n.status != .Clean || n.pending_child do _schedule(e.id)
 }
 
-// run fn without subscribing to anything it read
+// run fn without making the current effect depend on what fn read
 untrack :: proc(fn: proc(ctx: rawptr), ctx: rawptr = nil) {
     if fn == nil do return
     prev := _untracked

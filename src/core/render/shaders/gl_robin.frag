@@ -1,5 +1,5 @@
 #version 330 core
-// Port of (jamesthomasgriffin/robin)
+// port of jamesthomasgriffin/robin
 in vec2 v_uv;
 in vec4 v_color;
 flat in uvec2 v_robin;
@@ -67,6 +67,38 @@ vec3 curve_crossing(vec2 p1, vec2 p2, vec2 p3, float line_y, vec2 q) {
     return vec3(change, prox_x, prox_y);
 }
 
+uniform int u_clip_count;
+uniform mat3 u_clip[4];
+uniform vec2 u_clip_size[4];
+uniform vec4 u_clip_radius[4];
+uniform vec4 u_clip_radius_y[4];
+float clip_coverage() {
+    float a = 1.0;
+    for (int i = 0; i < 4; i++) {
+        if (i >= u_clip_count) break;
+        vec2 q = (u_clip[i] * vec3(gl_FragCoord.xy, 1.0)).xy;
+        vec2 half_size = u_clip_size[i] * 0.5;
+        vec2 c = q - half_size;
+        vec4 rx = u_clip_radius[i];
+        vec4 ry = u_clip_radius_y[i];
+        vec2 r = c.x < 0.0 ? (c.y < 0.0 ? vec2(rx.x, ry.x) : vec2(rx.w, ry.w)) : (c.y < 0.0 ? vec2(rx.y, ry.y) : vec2(rx.z, ry.z));
+        vec2 d = abs(c) - half_size + r;
+        float sd = max(d.x - r.x, d.y - r.y);
+        if (d.x > 0.0 && d.y > 0.0 && r.x > 0.0 && r.y > 0.0) {
+            vec2 n = d / r;
+            float k = length(n);
+            sd = (k - 1.0) * k / max(length(n / r), 1e-6);
+        }
+        a *= clamp(0.5 - sd, 0.0, 1.0);
+    }
+    return a;
+}
+
+// convert an sRGB color to linear, alpha and coverage are already linear
+vec3 srgb_to_linear(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
 void main() {
     ivec2 cell = ivec2(floor(clamp(v_uv, vec2(0.0), vec2(15.999))));
     int cell_index = int(v_robin.x) + cell.y * 16 + cell.x;
@@ -94,5 +126,5 @@ void main() {
     else if (winding == 1.0)  alpha = (proximity > 0.0) ? 1.0 : min(0.5 - proximity, 1.0);
     else if (winding == -1.0) alpha = (proximity < 0.0) ? 1.0 : min(0.5 + proximity, 1.0);
     else                      alpha = 1.0;
-    frag = vec4(v_color.rgb, v_color.a * alpha);
+    frag = vec4(srgb_to_linear(v_color.rgb), v_color.a * alpha * clip_coverage());
 }

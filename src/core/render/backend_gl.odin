@@ -9,10 +9,9 @@ import "src:core/common"
 
 GL_ROBIN_ENABLED     :: #config(BANANA_TEXT_ROBIN_GPU_UNSAFE, true)
 GL_ROBIN_ATLAS_WIDTH :: 1024
+GL_DIRECT_BACKBUFFER :: #config(BANANA_GL_DIRECT_BACKBUFFER, true)
 
-// OpenGL 3.3 core backend. Streams Vertex quads through a single VAO/VBO/IBO
-// pair into a colored+textured shader. Stencil clipping uses a bit-stack
-// (one GL stencil bit per nesting depth).
+// state of the OpenGL 3.3 core backend, one per window
 @(private="file")
 GL_State :: struct {
     render: Render_Interface,
@@ -23,6 +22,9 @@ GL_State :: struct {
     swapchain_w:    int,
     swapchain_h:    int,
     stencil_depth:  int,
+    clip_count_loc: [_Clip_Slot]i32,
+    clip_loc_ready: [_Clip_Slot]bool,
+    clip_count_sent: [_Clip_Slot]int,
     textures:       [dynamic]GL_Texture,
     render_targets: [dynamic]GL_RT,
     meshes:         [dynamic]GL_Glyph_Mesh,
@@ -40,6 +42,23 @@ GL_State :: struct {
     robin_data_version:                    u64,
 
     using gl_msdf: GL_MSDF_Program,
+
+    // true when frames go straight into the default framebuffer, with no screen target and no present pass
+    direct:          bool,
+    present_program: u32,
+    screen_texture: Texture,
+    screen_target: Render_Target,
+    samples:               int,
+    screen_samples_fbo:     u32,
+    screen_samples_color:   u32,
+    screen_samples_stencil: u32,
+    resolve_program:        u32,
+    screen_dirty:           common.Rect,
+    // the screen texture after the present pass, kept for read_pixels
+    encoded_fbo, encoded_tex: u32,
+    encoded_w, encoded_h:     int,
+    effect_program: u32,
+    layer:          Render_Target,
 }
 
 @(private="file")
@@ -80,6 +99,7 @@ GL_ROBIN_Program :: struct #all_or_none {
 @(private="file")
 GL_RT :: struct {
     fbo:       u32,
+    stencil:   u32,
     tex_index: int,
     width:     int,
     height:    int,
@@ -107,7 +127,7 @@ VS_SOURCE :: string(#load("shaders/gl_quad.vert"))
 @(private="file")
 FS_SOURCE :: string(#load("shaders/gl_quad.frag"))
 
-// Glyph pipeline: Adapted from GreenLightning/gpu-font-rendering (MIT).
+// glyph pipeline adapted from GreenLightning/gpu-font-rendering (MIT)
 @(private="file")
 GLYPH_VS_SOURCE :: string(#load("shaders/gl_glyph.vert"))
 @(private="file")
@@ -116,13 +136,15 @@ GLYPH_FS_SOURCE :: string(#load("shaders/gl_glyph.frag"))
 ROBIN_VS_SOURCE :: string(#load("shaders/gl_robin.vert"))
 @(private="file")
 ROBIN_FS_SOURCE :: string(#load("shaders/gl_robin.frag"))
-// Mirrors text.ROBIN_GRID, which render cannot import (text depends on render).
-// The value is also a #define in gl_robin.frag; all three must agree.
+// copy of text.ROBIN_GRID cuz render cant import text (text depend on render)
+// gl_robin.frag has it as a #define too, all three must match
 GL_ROBIN_GRID :: 16
 @(private="file")
 MSDF_VS_SOURCE :: string(#load("shaders/gl_msdf.vert"))
 @(private="file")
 MSDF_FS_SOURCE :: string(#load("shaders/gl_msdf.frag"))
+@(private="file")
+EFFECT_FS_SOURCE :: string(#load("shaders/gl_effect.frag"))
 
 @(private = "file")
 _create_state :: proc(allocator: runtime.Allocator) -> rawptr {
@@ -177,9 +199,11 @@ _init :: proc(
     if !render.make_context(render.state, options) {
         panic("render backend 'gl': glue.make_context failed")
     }
-    gl.load_up_to(3, 3, _load_proc)
+    // the context is 3.3, the 4.1 entry points are only for the program cache
+    // and the cache check that the driver really returned them
+    gl.load_up_to(4, 1, _load_proc)
 
-    program, ok := gl.load_shaders_source(VS_SOURCE, FS_SOURCE)
+    program, ok := _gl_load_program("quad", VS_SOURCE, FS_SOURCE)
     if !ok {
         compile_msg, _, link_msg, _ := gl.get_last_error_messages()
         panic(fmt.tprintf("render backend 'gl': shader compile failed\n%s\n%s", compile_msg, link_msg))
@@ -215,7 +239,7 @@ _init :: proc(
     gl.EnableVertexAttribArray(3)
     gl.VertexAttribIPointer(3, 1, gl.UNSIGNED_INT, stride, 20)
 
-    glyph_program, glyph_ok := gl.load_shaders_source(GLYPH_VS_SOURCE, GLYPH_FS_SOURCE)
+    glyph_program, glyph_ok := _gl_load_program("glyph", GLYPH_VS_SOURCE, GLYPH_FS_SOURCE)
     if !glyph_ok {
         compile_msg, _, link_msg, _ := gl.get_last_error_messages()
         panic(fmt.tprintf("render backend 'gl': glyph shader compile failed\n%s\n%s", compile_msg, link_msg))
@@ -228,7 +252,7 @@ _init :: proc(
     }
 
     when GL_ROBIN_ENABLED {
-        robin_program, robin_ok := gl.load_shaders_source(ROBIN_VS_SOURCE, ROBIN_FS_SOURCE)
+        robin_program, robin_ok := _gl_load_program("robin", ROBIN_VS_SOURCE, ROBIN_FS_SOURCE)
         if !robin_ok {
             compile_msg, _, link_msg, _ := gl.get_last_error_messages()
             panic(fmt.tprintf("render backend 'gl': ROBIN shader compile failed\n%s\n%s", compile_msg, link_msg))
@@ -242,7 +266,7 @@ _init :: proc(
         }
     }
 
-    msdf_program, msdf_ok := gl.load_shaders_source(MSDF_VS_SOURCE, MSDF_FS_SOURCE)
+    msdf_program, msdf_ok := _gl_load_program("msdf", MSDF_VS_SOURCE, MSDF_FS_SOURCE)
     if !msdf_ok {
         compile_msg, _, link_msg, _ := gl.get_last_error_messages()
         panic(fmt.tprintf("render backend 'gl': MSDF shader compile failed\n%s\n%s", compile_msg, link_msg))
@@ -253,6 +277,28 @@ _init :: proc(
         msdf_loc_range       = gl.GetUniformLocation(msdf_program, "u_px_range"),
         msdf_loc_u_transform = gl.GetUniformLocation(msdf_program, "u_transform"),
         msdf_loc_atlas       = gl.GetUniformLocation(msdf_program, "u_atlas")
+    }
+
+    effect_program, effect_ok := _gl_load_program("effect", VS_SOURCE, EFFECT_FS_SOURCE)
+    if !effect_ok {
+        compile_msg, _, link_msg, _ := gl.get_last_error_messages()
+        panic(fmt.tprintf("render backend 'gl': effect shader compile failed\n%s\n%s", compile_msg, link_msg))
+    }
+    _state.effect_program = effect_program
+
+    _state.direct = GL_DIRECT_BACKBUFFER && !options.transparent && !options.retained && _backbuffer_is_srgb_with_stencil()
+    if options.retained && options.msaa_samples > 1 {
+        most: i32
+        gl.GetIntegerv(gl.MAX_SAMPLES, &most)
+        _state.samples = min(int(options.msaa_samples), int(most))
+        resolve_program, resolve_ok := _gl_load_program("resolve", string(#load("shaders/gl_present.vert")), string(#load("shaders/gl_resolve.frag")))
+        assert(resolve_ok, "OpenGL resolve shader compilation failed")
+        _state.resolve_program = resolve_program
+    }
+    if !_state.direct {
+        present_program, present_ok := _gl_load_program("present", string(#load("shaders/gl_present.vert")), string(#load("shaders/gl_present.frag")))
+        assert(present_ok, "OpenGL presentation shader compilation failed")
+        _state.present_program = present_program
     }
 
     glyph_vaos: [1]u32
@@ -308,6 +354,22 @@ _init :: proc(
 }
 
 @(private="file")
+_backbuffer_is_srgb_with_stencil :: proc() -> bool {
+    gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+    stencil_bits: i32
+    gl.GetFramebufferAttachmentParameteriv(gl.FRAMEBUFFER, gl.STENCIL, gl.FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencil_bits)
+    if stencil_bits < 8 do return false
+
+    gl.Enable(gl.FRAMEBUFFER_SRGB)
+    gl.Disable(gl.SCISSOR_TEST)
+    gl.ClearColor(0.5, 0.5, 0.5, 1)
+    gl.Clear(gl.COLOR_BUFFER_BIT)
+    pixel: [4]u8
+    gl.ReadPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, &pixel[0])
+    return pixel[0] > 170
+}
+
+@(private="file")
 _gl_max_texture_size :: proc() -> int {
     if _state.max_texture_size == 0 {
         v: i32
@@ -321,6 +383,12 @@ _gl_max_texture_size :: proc() -> int {
 _shutdown :: proc() {
     if _state == nil do return
     gl.Finish()
+    if _state.screen_samples_fbo != 0 {
+        fbos := [1]u32{_state.screen_samples_fbo}
+        gl.DeleteFramebuffers(1, &fbos[0])
+        gl.DeleteTextures(1, &_state.screen_samples_color)
+        gl.DeleteRenderbuffers(1, &_state.screen_samples_stencil)
+    }
     gl.UseProgram(0)
     gl.BindVertexArray(0)
     gl.ActiveTexture(gl.TEXTURE0)
@@ -339,6 +407,10 @@ _shutdown :: proc() {
     if _state.glyph_program != 0 do gl.DeleteProgram(_state.glyph_program)
     if _state.robin_program != 0 do gl.DeleteProgram(_state.robin_program)
     if _state.msdf_program != 0 do gl.DeleteProgram(_state.msdf_program)
+    if _state.effect_program != 0 do gl.DeleteProgram(_state.effect_program)
+    if _state.present_program != 0 do gl.DeleteProgram(_state.present_program)
+    if _state.encoded_fbo != 0 do gl.DeleteFramebuffers(1, &_state.encoded_fbo)
+    if _state.encoded_tex != 0 do gl.DeleteTextures(1, &_state.encoded_tex)
     for mesh in _state.glyph_meshes {
         if mesh.vao != 0 {
             ids := [1]u32{mesh.vao}
@@ -363,6 +435,8 @@ _shutdown :: proc() {
     for rt in _state.render_targets {
         del := [1]u32{rt.fbo}
         gl.DeleteFramebuffers(1, &del[0])
+        del_stencil := [1]u32{rt.stencil}
+        if rt.stencil != 0 do gl.DeleteRenderbuffers(1, &del_stencil[0])
     }
     delete(_state.textures)
     delete(_state.render_targets)
@@ -371,21 +445,175 @@ _shutdown :: proc() {
 }
 
 @(private="file")
-_clear :: proc(target: Render_Target, color: common.Color) {
-    _bind_target(target)
-    gl.Disable(gl.SCISSOR_TEST)
-    gl.ClearColor(f32(color[0]) / 255, f32(color[1]) / 255, f32(color[2]) / 255, f32(color[3]) / 255)
+_retained :: proc() -> bool {
+    return !_state.direct
+}
+
+@(private="file")
+_clear :: proc(target: Render_Target, color: common.Color, scissor: Maybe(common.Rect) = nil) {
+    target_w, target_h := _bind_target(target)
+    if r, ok := scissor.?; ok {
+        gl.Enable(gl.SCISSOR_TEST)
+        gl.Scissor(i32(r.x), max(i32(target_h) - i32(r.y) - i32(r.h), 0), i32(r.w), i32(r.h))
+    } else {
+        gl.Disable(gl.SCISSOR_TEST)
+    }
+    // a frame only draw inside what it cleared, so a resolve only copy that
+    if target == INVALID_RENDER_TARGET {
+        _state.screen_dirty = scissor.? or_else common.Rect{0, 0, f32(target_w), f32(target_h)}
+    }
+    alpha := f32(color[3]) / 255
+    gl.ClearColor(common.srgb_to_linear(f32(color[0]) / 255) * alpha, common.srgb_to_linear(f32(color[1]) / 255) * alpha, common.srgb_to_linear(f32(color[2]) / 255) * alpha, alpha)
     gl.Clear(gl.COLOR_BUFFER_BIT)
 }
 
 @(private="file")
+_ensure_screen :: proc() {
+    if _state.direct do return
+    w, h := _state.swapchain_w, _state.swapchain_h
+    if w <= 0 || h <= 0 do return
+    if int(_state.screen_target.w) == w && int(_state.screen_target.h) == h do return
+    if _state.screen_target != INVALID_RENDER_TARGET {
+        // reuse the handles while resizing, or window drags pile up target slots
+        tex := &_state.textures[int(_state.screen_texture) - 1]
+        rt := &_state.render_targets[int(_state.screen_target.idx) - 1]
+        gl.BindTexture(gl.TEXTURE_2D, tex.id)
+        gl.TexImage2D(gl.TEXTURE_2D, 0, gl.SRGB8_ALPHA8, i32(w), i32(h), 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
+        gl.BindRenderbuffer(gl.RENDERBUFFER, rt.stencil)
+        gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, i32(w), i32(h))
+        tex.width, tex.height = w, h
+        rt.width, rt.height = w, h
+        _state.screen_target.w, _state.screen_target.h = u32(w), u32(h)
+        _size_screen_samples(w, h)
+        return
+    }
+    _state.screen_texture, _state.screen_target = _create_render_texture(w, h)
+    _size_screen_samples(w, h)
+}
+
+// size the multisampled storage antialiased frames draw into
+// the screen target is a one-sample texture, the samples get resolved into it on present
+@(private="file")
+_size_screen_samples :: proc(w, h: int) {
+    if _state.samples <= 1 do return
+    if _state.screen_samples_fbo == 0 {
+        ids: [1]u32
+        gl.GenTextures(1, &ids[0])
+        _state.screen_samples_color = ids[0]
+        gl.GenRenderbuffers(1, &ids[0])
+        _state.screen_samples_stencil = ids[0]
+        gl.GenFramebuffers(1, &ids[0])
+        _state.screen_samples_fbo = ids[0]
+    }
+    // a texture not a renderbuffer cuz the resolve read its samples one by one
+    gl.BindTexture(gl.TEXTURE_2D_MULTISAMPLE, _state.screen_samples_color)
+    gl.TexImage2DMultisample(gl.TEXTURE_2D_MULTISAMPLE, i32(_state.samples), gl.SRGB8_ALPHA8, i32(w), i32(h), true)
+    gl.BindRenderbuffer(gl.RENDERBUFFER, _state.screen_samples_stencil)
+    gl.RenderbufferStorageMultisample(gl.RENDERBUFFER, i32(_state.samples), gl.DEPTH24_STENCIL8, i32(w), i32(h))
+    gl.BindFramebuffer(gl.FRAMEBUFFER, _state.screen_samples_fbo)
+    gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D_MULTISAMPLE, _state.screen_samples_color, 0)
+    gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, _state.screen_samples_stencil)
+    assert(gl.CheckFramebufferStatus(gl.FRAMEBUFFER) == gl.FRAMEBUFFER_COMPLETE, "incomplete multisampled screen target")
+}
+
+@(private="file")
+_resolve_screen :: proc() {
+    if _state.screen_samples_fbo == 0 do return
+    rt := _state.render_targets[int(_state.screen_target.idx) - 1]
+    r := _state.screen_dirty
+    x0 := clamp(i32(r.x), 0, i32(rt.width))
+    x1 := clamp(i32(r.x + r.w), 0, i32(rt.width))
+    y0 := clamp(i32(rt.height) - i32(r.y + r.h), 0, i32(rt.height))
+    y1 := clamp(i32(rt.height) - i32(r.y), 0, i32(rt.height))
+    _state.screen_dirty = {}
+    if x1 <= x0 || y1 <= y0 do return
+    // resolve with a shader so samples average as light on every driver
+    // a blit or the window's own samples average however the driver like, and that change how heavy thin text look
+    gl.BindFramebuffer(gl.FRAMEBUFFER, rt.fbo)
+    gl.Viewport(0, 0, i32(rt.width), i32(rt.height))
+    gl.Enable(gl.FRAMEBUFFER_SRGB)
+    gl.Enable(gl.SCISSOR_TEST)
+    gl.Scissor(x0, y0, x1 - x0, y1 - y0)
+    gl.Disable(gl.STENCIL_TEST)
+    gl.Disable(gl.BLEND)
+    gl.ColorMask(true, true, true, true)
+    gl.UseProgram(_state.resolve_program)
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindTexture(gl.TEXTURE_2D_MULTISAMPLE, _state.screen_samples_color)
+    gl.Uniform1i(gl.GetUniformLocation(_state.resolve_program, "u_tex"), 0)
+    gl.Uniform1i(gl.GetUniformLocation(_state.resolve_program, "u_samples"), i32(_state.samples))
+    gl.BindVertexArray(_state.vao)
+    gl.DrawArrays(gl.TRIANGLES, 0, 3)
+    gl.Enable(gl.STENCIL_TEST)
+    _blend(.Alpha)
+}
+
+@(private="file")
 _present :: proc() {
+    _ensure_screen()
+    if _state.screen_target != INVALID_RENDER_TARGET {
+        _resolve_screen()
+        // encode once for the default framebuffer cuz it may not be sRGB
+        gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+        gl.Viewport(0, 0, i32(_state.swapchain_w), i32(_state.swapchain_h))
+        gl.Disable(gl.SCISSOR_TEST)
+        _draw_present_pass()
+    }
     when common.GPU_SYNC {
         gpu_start := common.profile_begin(.GPU_Wait)
         gl.Finish()
         common.profile_end(.GPU_Wait, gpu_start)
     }
     _state.render.present(_state.render.state)
+}
+
+@(private="file")
+_draw_present_pass :: proc() {
+    gl.Disable(gl.FRAMEBUFFER_SRGB)
+    gl.Disable(gl.STENCIL_TEST)
+    gl.Disable(gl.BLEND)
+    gl.ColorMask(true, true, true, true)
+    gl.UseProgram(_state.present_program)
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindTexture(gl.TEXTURE_2D, _state.textures[int(_state.screen_texture) - 1].id)
+    gl.Uniform1i(gl.GetUniformLocation(_state.present_program, "u_tex"), 0)
+    gl.BindVertexArray(_state.vao)
+    gl.DrawArrays(gl.TRIANGLES, 0, 3)
+    gl.Enable(gl.STENCIL_TEST)
+    _blend(.Alpha)
+}
+
+// encode a rect of the screen target and leave the encoded target bound
+// the returned rect is in GL's bottom-up coordinates
+@(private="file")
+_encode_screen :: proc(r: common.Rect) -> (x0, y0, x1, y1: i32, ok: bool) {
+    w, h := _state.swapchain_w, _state.swapchain_h
+    if _state.encoded_w != w || _state.encoded_h != h {
+        if _state.encoded_fbo == 0 {
+            gl.GenTextures(1, &_state.encoded_tex)
+            gl.GenFramebuffers(1, &_state.encoded_fbo)
+        }
+        gl.BindTexture(gl.TEXTURE_2D, _state.encoded_tex)
+        gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, i32(w), i32(h), 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
+        gl.BindFramebuffer(gl.FRAMEBUFFER, _state.encoded_fbo)
+        gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, _state.encoded_tex, 0)
+        assert(gl.CheckFramebufferStatus(gl.FRAMEBUFFER) == gl.FRAMEBUFFER_COMPLETE, "incomplete encoded target")
+        _state.encoded_w, _state.encoded_h = w, h
+    }
+
+    x0 = clamp(i32(r.x), 0, i32(w))
+    x1 = clamp(i32(r.x + r.w), 0, i32(w))
+    y0 = clamp(i32(h) - i32(r.y + r.h), 0, i32(h))
+    y1 = clamp(i32(h) - i32(r.y), 0, i32(h))
+    if x1 <= x0 || y1 <= y0 do return
+
+    gl.BindFramebuffer(gl.FRAMEBUFFER, _state.encoded_fbo)
+    gl.Viewport(0, 0, i32(w), i32(h))
+    gl.Enable(gl.SCISSOR_TEST)
+    gl.Scissor(x0, y0, x1 - x0, y1 - y0)
+    _draw_present_pass()
+    gl.Disable(gl.SCISSOR_TEST)
+    return x0, y0, x1, y1, true
 }
 
 @(private="file")
@@ -422,13 +650,10 @@ _draw :: proc(
         gl.Disable(gl.SCISSOR_TEST)
     }
 
-    switch blend {
-    case .Opaque:   gl.Disable(gl.BLEND)
-    case .Alpha:    gl.Enable(gl.BLEND); _blend_over()
-    case .Additive: gl.Enable(gl.BLEND); _blend_additive()
-    }
+    _blend(blend)
 
     gl.UseProgram(_state.program)
+    _apply_clip_edges(.Quad, _state.program, target, target_h)
     gl.Uniform2f(_state.loc_resolution, f32(target_w), f32(target_h))
     identity := common.Mat3X3_IDENTITY
     gl.UniformMatrix3fv(_state.loc_transform, 1, false, &identity[0,0])
@@ -442,6 +667,10 @@ _draw :: proc(
             gl.Uniform1i(_state.loc_tex, 0)
             has_tex = true
         }
+    }
+    if !has_tex {
+        gl.ActiveTexture(gl.TEXTURE0)
+        gl.BindTexture(gl.TEXTURE_2D, 0)
     }
     gl.Uniform1i(_state.loc_has_tex, has_tex ? 1 : 0)
 
@@ -520,18 +749,10 @@ _draw_mesh :: proc(
         gl.Disable(gl.SCISSOR_TEST)
     }
 
-    switch blend {
-    case .Opaque:
-        gl.Disable(gl.BLEND)
-    case .Alpha:
-        gl.Enable(gl.BLEND)
-        _blend_over()
-    case .Additive:
-        gl.Enable(gl.BLEND)
-        _blend_additive()
-    }
+    _blend(blend)
 
     gl.UseProgram(_state.program)
+    _apply_clip_edges(.Quad, _state.program, target, target_h)
     gl.Uniform2f(_state.loc_resolution, f32(target_w), f32(target_h))
     matrix_values := transmute([9]f32)transform
     gl.UniformMatrix3fv(_state.loc_transform, 1, false, &matrix_values[0])
@@ -545,6 +766,10 @@ _draw_mesh :: proc(
             gl.Uniform1i(_state.loc_tex, 0)
             has_tex = true
         }
+    }
+    if !has_tex {
+        gl.ActiveTexture(gl.TEXTURE0)
+        gl.BindTexture(gl.TEXTURE_2D, 0)
     }
     gl.Uniform1i(_state.loc_has_tex, has_tex ? 1 : 0)
 
@@ -581,13 +806,14 @@ _draw_glyphs :: proc(
     if _state.curves_version != curves_version && len(curves) > 0 {
         gl.BindBuffer(gl.TEXTURE_BUFFER, _state.curve_buf)
         _upload_buffer(gl.TEXTURE_BUFFER, len(curves) * size_of([2]f32), &curves[0])
-        // Re-attach: some drivers latch the buffer store present at TexBuffer time.
+        // attach again cuz some drivers latch the buffer store that existed at TexBuffer time
         gl.BindTexture(gl.TEXTURE_BUFFER, _state.curve_tex)
         gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RG32F, _state.curve_buf)
         _state.curves_version = curves_version
     }
 
     gl.UseProgram(_state.glyph_program)
+    _apply_clip_edges(.Glyph, _state.glyph_program, target, target_h)
     gl.Uniform2f(_state.glyph_loc_resolution, f32(target_w), f32(target_h))
     matrix_values := transmute([9]f32)transform
     gl.UniformMatrix3fv(_state.glyph_loc_transform, 1, false, &matrix_values[0])
@@ -677,6 +903,7 @@ _draw_glyph_mesh :: proc(
     }
 
     gl.UseProgram(_state.glyph_program)
+    _apply_clip_edges(.Glyph, _state.glyph_program, target, target_h)
     gl.Uniform2f(_state.glyph_loc_resolution, f32(target_w), f32(target_h))
     matrix_values := transmute([9]f32)transform
     gl.UniformMatrix3fv(_state.glyph_loc_transform, 1, false, &matrix_values[0])
@@ -757,8 +984,8 @@ _draw_robin_mesh :: proc(
         required_rows := (len(data) + GL_ROBIN_ATLAS_WIDTH - 1) / GL_ROBIN_ATLAS_WIDTH
         atlas_height := 1
         for atlas_height < required_rows do atlas_height *= 2
-        // Growing past GL_MAX_TEXTURE_SIZE makes TexImage2D fail while the
-        // TexSubImage2D calls below still write a full-size upload.
+        // growing past GL_MAX_TEXTURE_SIZE make TexImage2D fail
+        // but the TexSubImage2D calls below would still write a full-size upload
         if atlas_height > _gl_max_texture_size() do return
         gl.BindTexture(gl.TEXTURE_2D, _state.robin_tex)
         if _state.robin_atlas_width != GL_ROBIN_ATLAS_WIDTH ||
@@ -787,6 +1014,7 @@ _draw_robin_mesh :: proc(
         _state.robin_data_version = data_version
     }
     gl.UseProgram(_state.robin_program)
+    _apply_clip_edges(.Robin, _state.robin_program, target, target_h)
     gl.Uniform2f(_state.robin_loc_resolution, f32(target_w), f32(target_h))
     matrix_values := transmute([9]f32)transform
     gl.UniformMatrix3fv(_state.robin_loc_transform, 1, false, &matrix_values[0])
@@ -861,6 +1089,7 @@ _draw_msdf_mesh :: proc(
     gl.Enable(gl.BLEND)
     _blend_over()
     gl.UseProgram(_state.msdf_program)
+    _apply_clip_edges(.MSDF, _state.msdf_program, target, target_h)
     gl.Uniform2f(_state.msdf_loc_resolution, f32(target_w), f32(target_h))
     matrix_values := linalg.matrix_flatten(transform)
     gl.UniformMatrix3fv(_state.msdf_loc_u_transform, 1, false, &matrix_values[0])
@@ -887,7 +1116,7 @@ _create_texture :: proc(data: []u8, width: int, height: int, format: Pixel_Forma
     internal, layout_fmt, _ := _texture_format(format)
     gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
     if format == .A8 {
-        // GL_R8 samples as (r, 0, 0, 1); expose it as an alpha mask.
+        // GL_R8 sample as (r, 0, 0, 1), swizzle it into an alpha mask
         gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_SWIZZLE_R, i32(gl.ONE))
         gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_SWIZZLE_G, i32(gl.ONE))
         gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_SWIZZLE_B, i32(gl.ONE))
@@ -967,15 +1196,24 @@ _unload_image :: proc(image: ^Image) {
 @(private="file")
 _create_render_texture :: proc(width: int, height: int) -> (Texture, Render_Target) {
     tex_handle := _create_texture({}, width, height, .RGBA8)
+    // store encoded RGB at 8 bit, sampling and blending still happen in linear light
+    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.SRGB8_ALPHA8, i32(width), i32(height), 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
 
     fbos: [1]u32
     gl.GenFramebuffers(1, &fbos[0])
     fbo := fbos[0]
     gl.BindFramebuffer(gl.FRAMEBUFFER, fbo)
     gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, _state.textures[int(tex_handle) - 1].id, 0)
+    stencils: [1]u32
+    gl.GenRenderbuffers(1, &stencils[0])
+    gl.BindRenderbuffer(gl.RENDERBUFFER, stencils[0])
+    gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, i32(width), i32(height))
+    gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, stencils[0])
+    assert(gl.CheckFramebufferStatus(gl.FRAMEBUFFER) == gl.FRAMEBUFFER_COMPLETE, "incomplete sRGB render target")
 
     append(&_state.render_targets, GL_RT{
         fbo       = fbo,
+        stencil   = stencils[0],
         tex_index = int(tex_handle) - 1,
         width     = width,
         height    = height,
@@ -993,7 +1231,10 @@ _destroy_render_target :: proc(handle: Render_Target) {
     if i < 0 || i >= len(_state.render_targets) do return
     del := [1]u32{_state.render_targets[i].fbo}
     gl.DeleteFramebuffers(1, &del[0])
+    del_stencil := [1]u32{_state.render_targets[i].stencil}
+    if del_stencil[0] != 0 do gl.DeleteRenderbuffers(1, &del_stencil[0])
     _state.render_targets[i].fbo = 0
+    _state.render_targets[i].stencil = 0
 }
 
 @(private="file")
@@ -1011,15 +1252,27 @@ _swapchain_size :: proc() -> (int, int) {
 @(private="file")
 _read_pixels :: proc(target: Render_Target, allocator: runtime.Allocator) -> ([]u8, int, int) {
     w, h := _bind_target(target)
-    // After SwapBuffers the back buffer is undefined; the presented frame
-    // lives in the front buffer.
-    if target == INVALID_RENDER_TARGET do gl.ReadBuffer(gl.FRONT)
+    // read the screen target, not the default framebuffer cuz that may be a hidden context window's or a swap behind
+    from_screen := target == INVALID_RENDER_TARGET && _state.screen_target != INVALID_RENDER_TARGET
+    if from_screen {
+        dirty := _state.screen_dirty
+        _resolve_screen()
+        // the next present still has to show this frame
+        _state.screen_dirty = dirty
+        w, h = _state.swapchain_w, _state.swapchain_h
+        if _, _, _, _, ok := _encode_screen({0, 0, f32(w), f32(h)}); !ok do return nil, 0, 0
+    }
+    // after SwapBuffers the back buffer is undefined, the presented frame is in the front buffer
+    if target == INVALID_RENDER_TARGET && !from_screen {
+        gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+        gl.ReadBuffer(gl.FRONT)
+    }
     data := make([]u8, w * h * 4, allocator)
     gl.PixelStorei(gl.PACK_ALIGNMENT, 1)
     gl.ReadPixels(0, 0, i32(w), i32(h), gl.RGBA, gl.UNSIGNED_BYTE, raw_data(data))
-    if target == INVALID_RENDER_TARGET do gl.ReadBuffer(gl.BACK)
+    if target == INVALID_RENDER_TARGET && !from_screen do gl.ReadBuffer(gl.BACK)
 
-    // GL rows are bottom-up; flip to top-left origin.
+    // GL rows are bottom-up, flip them to top-left origin
     row := w * 4
     tmp := make([]u8, row, context.temp_allocator)
     for y in 0 ..< h / 2 {
@@ -1033,7 +1286,38 @@ _read_pixels :: proc(target: Render_Target, allocator: runtime.Allocator) -> ([]
 }
 
 @(private="file")
+_Clip_Slot :: enum { Quad, Glyph, Robin, MSDF, Effect }
+@(private="file")
+_CLIP_UNIFORMS := [MAX_CLIP_EDGES][4]cstring{
+    {"u_clip[0]", "u_clip_size[0]", "u_clip_radius[0]", "u_clip_radius_y[0]"}, {"u_clip[1]", "u_clip_size[1]", "u_clip_radius[1]", "u_clip_radius_y[1]"},
+    {"u_clip[2]", "u_clip_size[2]", "u_clip_radius[2]", "u_clip_radius_y[2]"}, {"u_clip[3]", "u_clip_size[3]", "u_clip_radius[3]", "u_clip_radius_y[3]"},
+}
+
+@(private="file")
+_apply_clip_edges :: proc(slot: _Clip_Slot, program: u32, target: Render_Target, target_h: int) {
+    if !_state.clip_loc_ready[slot] {
+        _state.clip_count_loc[slot] = gl.GetUniformLocation(program, "u_clip_count")
+        _state.clip_loc_ready[slot] = true
+    }
+    count := clip_edge_count if target == _state.layer else 0
+    if count == 0 && _state.clip_count_sent[slot] == 0 do return
+    _state.clip_count_sent[slot] = count
+    gl.Uniform1i(_state.clip_count_loc[slot], i32(count))
+    flip := common.Mat3x3{1, 0, 0, 0, -1, f32(target_h), 0, 0, 1}
+    for i in 0 ..< count {
+        values := transmute([9]f32)(clip_edges[i].to_local * flip)
+        gl.UniformMatrix3fv(gl.GetUniformLocation(program, _CLIP_UNIFORMS[i][0]), 1, false, &values[0])
+        gl.Uniform2f(gl.GetUniformLocation(program, _CLIP_UNIFORMS[i][1]), clip_edges[i].size.x, clip_edges[i].size.y)
+        radius := clip_edges[i].radius
+        gl.Uniform4f(gl.GetUniformLocation(program, _CLIP_UNIFORMS[i][2]), radius[0].x, radius[1].x, radius[2].x, radius[3].x)
+        gl.Uniform4f(gl.GetUniformLocation(program, _CLIP_UNIFORMS[i][3]), radius[0].y, radius[1].y, radius[2].y, radius[3].y)
+    }
+}
+
+@(private="file")
 _stencil_clear :: proc() {
+    // the frame's clear may have left a scissor on, and the stencil must be cleared whole
+    gl.Disable(gl.SCISSOR_TEST)
     gl.ClearStencil(0)
     gl.Clear(gl.STENCIL_BUFFER_BIT)
 }
@@ -1041,24 +1325,25 @@ _stencil_clear :: proc() {
 @(private="file")
 _stencil_push_clip :: proc() {
     _state.stencil_depth += 1
+    // one stencil bit per nesting depth
     bit := u32(1) << u32(_state.stencil_depth)
 
+    width, height := _bind_target(_state.layer)
     fullscreen := [4]Vertex{
         {pos = {0, 0}},
-        {pos = {f32(_state.swapchain_w), 0}},
-        {pos = {f32(_state.swapchain_w), f32(_state.swapchain_h)}},
-        {pos = {0, f32(_state.swapchain_h)}},
+        {pos = {f32(width), 0}},
+        {pos = {f32(width), f32(height)}},
+        {pos = {0, f32(height)}},
     }
     indices := [6]u32{0, 1, 2, 0, 2, 3}
 
-    _bind_target(INVALID_RENDER_TARGET)
     gl.ColorMask(false, false, false, false)
     gl.StencilMask(bit)
     gl.StencilFunc(gl.ALWAYS, 0, 0)
     gl.StencilOp(gl.KEEP, gl.KEEP, gl.ZERO)
     gl.Disable(gl.SCISSOR_TEST)
     gl.UseProgram(_state.program)
-    gl.Uniform2f(_state.loc_resolution, f32(_state.swapchain_w), f32(_state.swapchain_h))
+    gl.Uniform2f(_state.loc_resolution, f32(width), f32(height))
     identity := common.Mat3X3_IDENTITY
     gl.UniformMatrix3fv(_state.loc_transform, 1, false, &identity[0,0])
     gl.Uniform1i(_state.loc_has_tex, 0)
@@ -1083,6 +1368,94 @@ _stencil_use_clip :: proc() {
 }
 
 @(private="file")
+_layer_begin :: proc(target: Render_Target) -> int {
+    token := _state.stencil_depth
+    _state.stencil_depth = 0
+    _state.layer = target
+    _bind_target(target)
+    gl.Disable(gl.SCISSOR_TEST)
+    gl.ColorMask(true, true, true, true)
+    gl.StencilMask(0xff)
+    gl.ClearColor(0, 0, 0, 0)
+    gl.ClearStencil(0)
+    gl.Clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
+    gl.StencilMask(0)
+    gl.StencilFunc(gl.ALWAYS, 0, 0)
+    return token
+}
+
+@(private="file")
+_layer_end :: proc(parent: Render_Target, token: int) {
+    _state.layer = parent
+    _state.stencil_depth = token + 1
+    _bind_target(parent)
+    _stencil_pop_clip()
+}
+
+@(private="file")
+_draw_effect :: proc(
+    target:   Render_Target,
+    source:   Texture,
+    vertices: [4]Vertex,
+    effect:   Effect,
+    scissor:  Maybe(common.Rect),
+    blend:    Blend_Mode,
+) {
+    i := int(source) - 1
+    if i < 0 || i >= len(_state.textures) || _state.textures[i].id == 0 do return
+    target_w, target_h := _bind_target(target)
+
+    if r, ok := scissor.?; ok {
+        y_bottom := i32(target_h) - i32(r.y) - i32(r.h)
+        if y_bottom < 0 do y_bottom = 0
+        gl.Enable(gl.SCISSOR_TEST)
+        gl.Scissor(i32(r.x), y_bottom, i32(r.w), i32(r.h))
+    } else {
+        gl.Disable(gl.SCISSOR_TEST)
+    }
+    _blend(blend)
+
+    program := _state.effect_program
+    gl.UseProgram(program)
+    _apply_clip_edges(.Effect, program, target, target_h)
+    gl.Uniform2f(gl.GetUniformLocation(program, "u_resolution"), f32(target_w), f32(target_h))
+    identity := common.Mat3X3_IDENTITY
+    gl.UniformMatrix3fv(gl.GetUniformLocation(program, "u_transform"), 1, false, &identity[0,0])
+    color := effect.color
+    gl.UniformMatrix4fv(gl.GetUniformLocation(program, "u_color"), 1, true, &color[0][0])
+    gl.Uniform4f(gl.GetUniformLocation(program, "u_offset"), effect.offset[0], effect.offset[1], effect.offset[2], effect.offset[3])
+    gl.Uniform2f(gl.GetUniformLocation(program, "u_step"), effect.step.x, effect.step.y)
+    gl.Uniform1i(gl.GetUniformLocation(program, "u_taps"), i32(min(effect.taps, MAX_EFFECT_TAPS)))
+    gl.Uniform1f(gl.GetUniformLocation(program, "u_sigma"), max(effect.sigma, 0.001))
+    gl.Uniform4f(gl.GetUniformLocation(program, "u_tint"), effect.tint[0], effect.tint[1], effect.tint[2], effect.tint[3])
+    gl.Uniform1i(gl.GetUniformLocation(program, "u_shadow"), 1 if effect.shadow else 0)
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindTexture(gl.TEXTURE_2D, _state.textures[i].id)
+    gl.Uniform1i(gl.GetUniformLocation(program, "u_tex"), 0)
+
+    quad := vertices
+    indices := [6]u32{0, 1, 2, 0, 2, 3}
+    gl.BindVertexArray(_state.vao)
+    gl.BindBuffer(gl.ARRAY_BUFFER, _state.vbo)
+    _stream_buffer(gl.ARRAY_BUFFER, size_of(quad), &quad[0])
+    gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, _state.ibo)
+    _stream_buffer(gl.ELEMENT_ARRAY_BUFFER, size_of(indices), &indices[0])
+    gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+    gl.Enable(gl.BLEND)
+    _blend_over()
+}
+
+@(private="file")
+_blend :: proc(mode: Blend_Mode) {
+    switch mode {
+    case .Opaque:        gl.Disable(gl.BLEND)
+    case .Alpha:         gl.Enable(gl.BLEND); _blend_over()
+    case .Additive:      gl.Enable(gl.BLEND); _blend_additive()
+    case .Premultiplied: gl.Enable(gl.BLEND); gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+    }
+}
+
+@(private="file")
 _stencil_pop_clip :: proc() {
     if _state.stencil_depth > 0 do _state.stencil_depth -= 1
     if _state.stencil_depth == 0 {
@@ -1098,6 +1471,17 @@ _stencil_pop_clip :: proc() {
 
 @(private="file")
 _bind_target :: proc(target: Render_Target) -> (width, height: int) {
+    gl.Enable(gl.FRAMEBUFFER_SRGB)
+    if target == INVALID_RENDER_TARGET {
+        _ensure_screen()
+        if _state.screen_samples_fbo != 0 {
+            w, h := int(_state.screen_target.w), int(_state.screen_target.h)
+            gl.BindFramebuffer(gl.FRAMEBUFFER, _state.screen_samples_fbo)
+            gl.Viewport(0, 0, i32(w), i32(h))
+            return w, h
+        }
+        if _state.screen_target != INVALID_RENDER_TARGET do return _bind_target(_state.screen_target)
+    }
     if target == INVALID_RENDER_TARGET {
         gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
         gl.Viewport(0, 0, i32(_state.swapchain_w), i32(_state.swapchain_h))
@@ -1114,7 +1498,7 @@ _bind_target :: proc(target: Render_Target) -> (width, height: int) {
         }
     }
 
-    // An invalid or destroyed target must not leave an unrelated FBO bound.
+    // bind fbo 0 first so an invalid or destroyed target cant leave some other FBO bound
     gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
     gl.Viewport(0, 0, i32(_state.swapchain_w), i32(_state.swapchain_h))
     return _state.swapchain_w, _state.swapchain_h
@@ -1140,6 +1524,7 @@ RENDERER_GL :: Renderer {
     set_active_state      = _set_active_state,
     make_current          = _make_current,
     clear                 = _clear,
+    retained              = _retained,
     present               = _present,
     draw                  = _draw,
     draw_mesh             = _draw_mesh,
@@ -1162,6 +1547,9 @@ RENDERER_GL :: Renderer {
     stencil_push_clip     = _stencil_push_clip,
     stencil_use_clip      = _stencil_use_clip,
     stencil_pop_clip      = _stencil_pop_clip,
+    layer_begin           = _layer_begin,
+    layer_end             = _layer_end,
+    draw_effect           = _draw_effect,
 }
 
 @(private = "file")

@@ -5,7 +5,7 @@ import "src:core/events"
 import "src:core/node"
 import "src:core/hit_test"
 
-// Capture the pointer for the node handling the current event.
+// make this node get every pointer event until you release, used for drags
 capture_pointer :: proc(node: ^node.Node) {
     if _active_input_state != nil do _active_input_state.captured = node
 }
@@ -29,9 +29,8 @@ captured_node :: proc(im: ^Input_State) -> ^Node {
     return im.captured
 }
 
-// Pointer moved to (x, y). Updates hover (firing enter/leave) and emits
-// "mousemove" at the node under the cursor. While the pointer is captured, the
-// move goes straight to the capturing node and hover is left untouched.
+// move the pointer, fires enter and leave when hover changes and sends "mousemove".
+// while captured only the capturing node gets the move and hover stays as it was.
 on_mouse_move :: proc(im: ^Input_State, x, y: f32) {
     _active_input_state = im
     im.mouse_x = x
@@ -77,11 +76,11 @@ on_mouse_leave :: proc(im: ^Input_State) {
     im.hovered = nil
 }
 
-// Button pressed. Dispatches "mousedown"; tracks the node for click/focus.
-// `mods` records the keyboard modifier state at press time so handlers can
-// query it via modifiers() (GLFW delivers mods on the button callback).
+// button went down, sends "mousedown" and remembers the node for click and focus.
+// mods is what handlers read back later through modifiers().
 on_mouse_down :: proc(im: ^Input_State, button: int, mods: events.Mods = {}) {
     _active_input_state = im
+    // glfw only gives mods on the button callback
     im.mods = mods
     target := hit_test.hit_test(im.root, im.mouse_x, im.mouse_y)
     im.pressed = target

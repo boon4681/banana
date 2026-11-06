@@ -35,7 +35,8 @@ clip_edges: [MAX_CLIP_EDGES]Clip_Edge
 @(thread_local)
 clip_edge_count: int
 
-// The innermost MAX_CLIP_EDGES entries are antialiased; outer ones only clip.
+// set the clip shapes the next draws get cut by
+// only the innermost MAX_CLIP_EDGES get antialiased edges, the outer ones just clip
 set_clip_edges :: proc(edges: []Clip_Edge) {
     first := max(len(edges) - MAX_CLIP_EDGES, 0)
     clip_edge_count = copy(clip_edges[:], edges[first:])
@@ -60,8 +61,8 @@ EFFECT_COPY :: Effect{
     }
 }
 
-// Vertex for the GPU glyph pipeline: `uv` is an em-space position and the curve fields window into the quadratic
-// bézier store passed to draw_glyphs.
+// a vertex of the GPU glyph pipeline
+// uv is in em space and the curve fields point into the bézier store passed to draw_glyphs
 Glyph_Vertex :: struct {
     pos:         [2]f32,
     uv:          [2]f32,
@@ -70,14 +71,14 @@ Glyph_Vertex :: struct {
     curve_count: u32,
 }
 
-// Backend-owned retained glyph geometry. The renderer releases every mesh at
-// context shutdown; callers may keep this lightweight handle on a text node.
+// glyph geometry the backend keep on the GPU
+// the renderer free every mesh at shutdown, the handle is small enough to keep on a text node
 Glyph_Mesh :: struct {
     idx:     u32,
     version: u64,
 }
 
-// Backend-owned retained geometry for the regular colored/textured pipeline.
+// colored and textured geometry the backend keep on the GPU
 Mesh :: struct {
     idx:     u32,
     version: u64,
@@ -98,11 +99,11 @@ Renderer :: struct #all_or_none {
     ),
     shutdown:         proc(),
     set_active_state: proc(state: rawptr),
-    make_current:     proc(), // Call after set_active_state when switching windows.
+    make_current:     proc(), // call after set_active_state when switching windows
 
     clear:    proc(target: Render_Target, color: common.Color, scissor: Maybe(common.Rect) = nil),
     present:  proc(),
-    retained: proc() -> bool, // The screen keeps the last frame's pixels, so the next one may draw only part of it.
+    retained: proc() -> bool, // true when the screen keep the last frame's pixels, so the next frame can redraw only part of it
 
     draw: proc(
 		target:   Render_Target,
@@ -113,8 +114,7 @@ Renderer :: struct #all_or_none {
 		blend:    Blend_Mode,
     ),
 
-    // Uploads only when the geometry version changes, then reuses the
-    // backend-owned vertex/index buffers on subsequent frames.
+    // draw a retained mesh, it only upload again when geometry_version change
     draw_mesh: proc(
         target:           Render_Target,
         mesh:             ^Mesh,
@@ -127,9 +127,8 @@ Renderer :: struct #all_or_none {
         blend:            Blend_Mode,
     ),
 
-	// Renders glyph quads straight from quadratic bézier outlines: 3 points
-	// per curve in em space. `curves_version` lets each backend context cache the upload;
-    // re-send the full slice whenever the version bumps.
+	// draw glyph quads straight from quadratic bézier outlines, 3 em space points per curve
+	// curves_version let each backend cache the upload, send the full slice again whenever it bump
     draw_glyphs: proc(
 		target:         Render_Target,
 		vertices:       []Glyph_Vertex,
@@ -140,8 +139,7 @@ Renderer :: struct #all_or_none {
 		scissor:        Maybe(common.Rect),
     ),
 
-    // Uploads when `mesh.version` differs from `geometry_version`, otherwise
-    // draws the retained VAO/VBO/IBO without touching CPU geometry.
+    // draw a retained glyph mesh, it only upload again when geometry_version change
     draw_glyph_mesh: proc(
         target:           Render_Target,
         mesh:             ^Glyph_Mesh,
@@ -154,8 +152,8 @@ Renderer :: struct #all_or_none {
         scissor:          Maybe(common.Rect),
     ),
 
-    // Experimental ROBIN path. The data buffer begins with per-cell winding
-    // records and points to duplicated local quadratic triples.
+    // draw a glyph mesh with the experimental ROBIN text path
+    // data start with per-cell winding records that point to copies of the local quadratic curves
     draw_robin_mesh: proc(
         target:           Render_Target,
         mesh:             ^Glyph_Mesh,
@@ -185,8 +183,8 @@ Renderer :: struct #all_or_none {
     update_texture:     proc(handle: Texture, data: []u8, rect: common.Rect) -> bool,
     set_texture_filter: proc(handle: Texture, min, mag, mip: Texture_Filter),
 
-    // Images keep their pixels in RAM. Upload creates and caches the GPU
-    // texture on first visible use; unload releases only that GPU copy.
+    // images keep their pixels in RAM, upload make and cache the GPU texture on first visible use
+    // unload only free that GPU copy
     upload_image: proc(image: ^Image) -> Texture,
     unload_image: proc(image: ^Image),
 
@@ -196,7 +194,7 @@ Renderer :: struct #all_or_none {
     resize:         proc(width, height: int),
     swapchain_size: proc() -> (int, int),
 
-	// RGBA8, top-left origin. Screen target reads the last presented frame.
+	// read a target back as RGBA8 with top-left origin, the screen give the last presented frame
     read_pixels: proc(target: Render_Target, allocator: runtime.Allocator) -> (data: []u8, width, height: int),
 
     stencil_clear:     proc(),
@@ -204,8 +202,8 @@ Renderer :: struct #all_or_none {
     stencil_use_clip:  proc(),
     stencil_pop_clip:  proc(),
 
-    // Each target has its own stencil buffer but the clip depth is one counter,
-    // so entering a layer saves it in `token` and leaving puts it back.
+    // start drawing into a layer, pass the returned token to layer_end
+    // each target has its own stencil but the clip depth is one counter, so the token save and restore it
     layer_begin: proc(target: Render_Target) -> (token: int),
     layer_end:   proc(parent: Render_Target, token: int),
 
@@ -222,7 +220,7 @@ Renderer :: struct #all_or_none {
 CONFIG_RENDERER_NAME :: #config(banana_RENDER_BACKEND, "")
 
 when ODIN_OS == .Windows {
-    DEFAULT_RENDERER_NAME :: "gl"
+    DEFAULT_RENDERER_NAME :: "d3d11"
     AVAILABLE_RENDERERS   :: "d3d11, gl, nil"
 } else when ODIN_OS == .Linux || ODIN_OS == .Darwin {
     DEFAULT_RENDERER_NAME :: "gl"
@@ -244,7 +242,7 @@ when CONFIG_RENDERER_NAME == "" {
 when RENDERER_NAME == "nil" {
     RENDERER :: RENDERER_NIL
 } else when RENDERER_NAME == "d3d11" {
-    #panic("banana: 'd3d11' render backend not implemented yet. Set banana_RENDER_BACKEND=nil for a headless build.")
+    RENDERER :: RENDERER_D3D11
 } else when RENDERER_NAME == "gl" {
     RENDERER :: RENDERER_GL
 } else when RENDERER_NAME == "webgl" {

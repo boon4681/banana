@@ -24,6 +24,9 @@ Selection_Unit :: struct {
 
 Selection_Gesture :: struct {
     dragging:    bool,
+    moved:       bool,
+    press_x:     f32,
+    press_y:     f32,
     granularity: text.Granularity,
     anchor:      Selection_Unit,
 
@@ -52,6 +55,7 @@ selection_begin :: proc(im: ^Input_State, x, y: f32, now: time.Tick) -> bool {
     }
 
     g := &im.selection.gesture
+    g.moved, g.press_x, g.press_y = false, x, y
     if .Shift in im.mods && im.selection.valid {
         anchor := im.selection.range.anchor
         if node.is_selectable(anchor.node) {
@@ -106,6 +110,10 @@ selection_extend :: proc(im: ^Input_State, x, y: f32) {
        !node.is_selectable(g.anchor.end.node) {
         return
     }
+    if !g.moved {
+        if x == g.press_x && y == g.press_y do return
+        g.moved = true
+    }
 
     hit := hit_test.hit_test(im.root, x, y)
     unit, ok := _unit_at(im.root, hit, x, y, g.granularity, true, g.anchor.start.node)
@@ -118,7 +126,7 @@ selection_end :: proc(im: ^Input_State) {
 
 selection_tick :: proc(im: ^Input_State, now: time.Tick) {
     g := &im.selection.gesture
-    if !g.dragging || !im.selection.valid || im.captured != nil {
+    if !g.dragging || !g.moved || !im.selection.valid || im.captured != nil {
         g.last_tick = {}
         return
     }
@@ -330,7 +338,7 @@ _ordered_points :: proc(root: ^Node, r: Selection_Range) -> (Selection_Point, Se
 
 @(private = "file")
 _point_compare :: proc(root: ^Node, a, b: Selection_Point) -> int {
-    _ = root // Node order is intrinsic to the parent/child tree.
+    _ = root // root not needed, node order comes from the tree itself
     if a.node != b.node do return _node_compare(a.node, b.node)
     if a.pos.offset < b.pos.offset do return -1
     if a.pos.offset > b.pos.offset do return 1

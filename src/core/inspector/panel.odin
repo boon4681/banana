@@ -3,11 +3,13 @@ package inspector
 
 import "base:intrinsics"
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:time"
 import "src:core/common"
 import "src:core/events"
+import "src:core/input"
 import "src:core/layout"
 import "src:core/node"
 import "src:core/paint"
@@ -16,6 +18,7 @@ import "src:core/platform"
 import "src:core/text"
 import "src:ui/box"
 import "src:ui/button"
+import ui_input "src:ui/input"
 
 MAX_CRUMBS :: 10
 
@@ -50,6 +53,11 @@ Panel :: struct {
     tree:   Tree_View,
     styles: Style_View,
 
+    search:      ^ui_input.Input,
+    search_info: Label,
+    matches:     [dynamic]Node_Id,
+    match_at:    int,
+
     snap:          ^Snapshot,
     frame_index:   int,
     selected:      Node_Id,
@@ -62,6 +70,7 @@ Panel :: struct {
 _panel: ^Panel
 
 select_node :: proc(p: ^Panel, id: Node_Id) {
+    if id != p.selected do editor_end(p)
     p.selected = id
     intrinsics.atomic_store(&p.insp.selected_id, id)
     if p.snap != nil {
@@ -73,6 +82,55 @@ select_node :: proc(p: ^Panel, id: Node_Id) {
 }
 
 @(private)
+// Set this to a path and the panel saves a picture of itself once it has settled.
+SHOT_VARIABLE :: "BANANA_INSPECTOR_SHOT"
+SHOT_FRAME    :: 180
+// Steps run before the picture, split by `;`: find:text, key:Down, select-text,
+// edit:width, style:width=300, text:hello.
+SCRIPT_VARIABLE :: "BANANA_INSPECTOR_SCRIPT"
+SCRIPT_FRAME    :: 60
+SCRIPT_STEP     :: 12
+
+@(private = "file")
+_script_step :: proc(p: ^Panel, index: int) {
+    script := os.get_env(SCRIPT_VARIABLE, context.temp_allocator)
+    steps := strings.split(script, ";", context.temp_allocator)
+    if script == "" || index >= len(steps) || p.snap == nil do return
+    name, _, argument := strings.partition(strings.trim_space(steps[index]), ":")
+    switch name {
+    case "find":
+        p.search->set_value(argument)
+        p.match_at = 0
+        search_run(p)
+        if len(p.matches) > 0 {
+            select_node(p, p.matches[0])
+            tree_scroll_to(&p.tree, p.snap, p.selected)
+        }
+    case "key":
+        key, _ := css_keyword(events.Key, strings.to_lower(argument, context.temp_allocator))
+        input.on_key_down(&p.win.input, key, 0, {}, false)
+    case "tree-edit":
+        tree_edit_begin(p, p.selected)
+    case "type":
+        if p.tree.editing != 0 do p.tree.field->set_value(argument)
+    case "commit":
+        if p.tree.editing != 0 do p.tree.field->onenter(p.tree.field->get_value())
+    case "select-text":
+        if p.styles.editor.text_id != 0 do select_node(p, p.styles.editor.text_id)
+    case "edit":
+        for key in Prop_Key {
+            if PROP_NAMES[key] == argument do editor_begin(p, .Style, key, p.selected, p.styles.props[key].value.text->get_text())
+        }
+    case "style":
+        prop, _, value := strings.partition(argument, "=")
+        for key in Prop_Key {
+            if PROP_NAMES[key] == prop do push_command(p.insp, {kind = .Style, id = p.selected, prop = key, value = value})
+        }
+    case "text":
+        push_command(p.insp, {kind = .Text, id = p.styles.editor.text_id, value = argument})
+    }
+}
+
 _panel_thread :: proc(data: rawptr) {
     insp := cast(^Inspector)data
     layout.scheduler_setup()
@@ -153,8 +211,8 @@ _build :: proc(p: ^Panel) {
     bar->style()->
         set_width(100, node.percent)->
         set_height(30)->
-        set_padding_x(6)->
-        set_gap_all(6)->
+        set_padding_inline(6)->
+        set_gap(6)->
         set_align_items(.Center)
     bar->style().background = PANEL
 
@@ -163,7 +221,7 @@ _build :: proc(p: ^Panel) {
         set_width(22)->
         set_height(22)->
         set_flex_shrink(0)->
-        set_align_items(.Center)->
+        set_align_content(.Center)->
         set_justify_content(.Center)
     p.pick_icon = icon(.Picker, 14, TEXT_DIM)
     p.pick_button->add(p.pick_icon)
@@ -171,7 +229,14 @@ _build :: proc(p: ^Panel) {
 
     p.title = label("Elements", TEXT, FONT_SIZE)
     p.stats = label("", TEXT_FAINT, FONT_SIZE)
-    bar->add(p.pick_button, divider(true), p.title.root, spacer(), p.stats.root)
+    p.search = input_field("Find tag, key, class or text", "search")
+    p.search->style()->set_width(220)->set_flex_shrink(1)
+    p.search.oninput = _search_input
+    p.search.onenter = _search_enter
+    p.search_info = label("", TEXT_FAINT, FONT_SIZE)
+    bar->add(p.pick_button, divider(true), p.title.root, p.search, p.search_info.root, spacer(), p.stats.root)
+
+    p.win->on(events.KEY_DOWN_EVENT, _panel_key, true)
 
     body := row_box("body")
     body->style()->
@@ -198,8 +263,8 @@ _build :: proc(p: ^Panel) {
     p.crumb_bar->style()->
         set_width(100, node.percent)->
         set_height(22)->
-        set_padding_x(8)->
-        set_gap_all(4)->
+        set_padding_inline(8)->
+        set_gap(4)->
         set_align_items(.Center)
     p.crumb_bar->style().background = PANEL
     for i in 0 ..< MAX_CRUMBS {
@@ -212,6 +277,90 @@ _build :: proc(p: ^Panel) {
 }
 
 @(private = "file")
+_typing :: proc(p: ^Panel) -> bool {
+    focused := p.win.input.focused
+    if focused == nil do return false
+    return focused == cast(^node.BaseNode)p.search || focused == cast(^node.BaseNode)p.styles.editor.field || focused == cast(^node.BaseNode)p.tree.field
+}
+
+@(private = "file")
+_panel_key :: proc(s: ^events.Event_Signal) {
+    p := _panel
+    e := cast(^events.Key_Event)s.data
+    if p == nil || e == nil do return
+    if e.code == .Escape {
+        editor_end(p)
+        tree_edit_end(p)
+        focus_node(p.win, nil)
+        return
+    }
+    if e.code == .F && .Ctrl in e.mods {
+        focus_node(p.win, p.search)
+        return
+    }
+    if _typing(p) do return
+    if e.code == .Enter || e.code == .F2 {
+        tree_edit_begin(p, p.selected)
+        return
+    }
+    if tree_navigate(p, e.code) do events.prevent_default(s)
+}
+
+search_run :: proc(p: ^Panel) {
+    clear(&p.matches)
+    clear(&p.tree.matched)
+    query := strings.to_lower(strings.trim_space(p.search->get_value()), context.temp_allocator)
+    if query == "" || p.snap == nil {
+        label_set(p.search_info, "")
+        return
+    }
+    for entry in p.snap.nodes {
+        fields := [4]string{str(p.snap, entry.name), str(p.snap, entry.key), str(p.snap, entry.classes), str(p.snap, entry.text)}
+        for field in fields {
+            if !strings.contains(strings.to_lower(field, context.temp_allocator), query) do continue
+            id := entry.id
+            if entry.text_like && entry.parent >= 0 && p.snap.nodes[entry.parent].child_count == 1 {
+                id = p.snap.nodes[entry.parent].id
+            }
+            if !p.tree.matched[id] do append(&p.matches, id)
+            p.tree.matched[id] = true
+            break
+        }
+    }
+    p.match_at = clamp(p.match_at, 0, max(0, len(p.matches) - 1))
+    if len(p.matches) == 0 {
+        label_set(p.search_info, "no match")
+    } else {
+        label_set(p.search_info, fmt.tprintf("%d of %d", p.match_at + 1, len(p.matches)))
+    }
+}
+
+@(private = "file")
+_search_input :: proc(self: ^ui_input.Input, value: string) {
+    p := _panel
+    if p == nil do return
+    p.match_at = 0
+    search_run(p)
+    _search_show(p)
+}
+
+@(private = "file")
+_search_enter :: proc(self: ^ui_input.Input, value: string) {
+    p := _panel
+    if p == nil || len(p.matches) == 0 do return
+    p.match_at = (p.match_at + 1) % len(p.matches)
+    search_run(p)
+    _search_show(p)
+}
+
+@(private = "file")
+_search_show :: proc(p: ^Panel) {
+    if len(p.matches) == 0 do return
+    select_node(p, p.matches[p.match_at])
+    tree_scroll_to(&p.tree, p.snap, p.selected)
+}
+
+@(private = "file")
 _build_title_bar :: proc(p: ^Panel, title: string) -> ^box.Box {
     p.caption = row_box("titlebar")
     p.caption->style()->set_width(100, node.percent)->set_height(TITLE_BAR_H)
@@ -221,7 +370,7 @@ _build_title_bar :: proc(p: ^Panel, title: string) -> ^box.Box {
     name->style()->
         set_height(TITLE_BAR_H)->
         set_flex_grow(1)->
-        set_padding_x(12)->
+        set_padding_inline(12)->
         set_align_items(.Center)
     name->add(label(title, BAR_TEXT, 12).root)
 
@@ -282,6 +431,7 @@ _frame :: proc(p: ^Panel) {
         tree_flatten(&p.tree, snap)
         styles_update(&p.styles, snap, p.selected)
         _sync_crumbs(p)
+        search_run(p)
     }
 
     if epoch := intrinsics.atomic_load(&insp.select_epoch); epoch != p.last_epoch {
@@ -303,6 +453,12 @@ _frame :: proc(p: ^Panel) {
     painter.pop_transform(w.painter)
     painter.end_frame(w.painter)
 
+    if p.frame_index >= SCRIPT_FRAME && p.frame_index < SHOT_FRAME && (p.frame_index - SCRIPT_FRAME) % SCRIPT_STEP == 0 {
+        _script_step(p, (p.frame_index - SCRIPT_FRAME) / SCRIPT_STEP)
+    }
+    if p.frame_index == SHOT_FRAME {
+        if path := os.get_env(SHOT_VARIABLE, context.temp_allocator); path != "" do platform.capture(w, path)
+    }
     p.frame_index += 1
     free_all(context.temp_allocator)
 }
@@ -345,9 +501,7 @@ _sync_crumbs :: proc(p: ^Panel) {
 
     for slot in 0 ..< depth {
         entry := p.snap.nodes[chain[depth - 1 - slot]]
-        name := str(p.snap, entry.name)
-        key := str(p.snap, entry.key)
-        text := name if key == "" else strings.concatenate({name, "#", key}, context.temp_allocator)
+        text := selector_text(p.snap, entry)
         if slot > 0 do text = strings.concatenate({"> ", text}, context.temp_allocator)
         label_set(p.crumbs[slot], text)
         label_color(p.crumbs[slot], TEXT if slot == depth - 1 else TEXT_DIM)

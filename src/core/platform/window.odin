@@ -7,6 +7,7 @@ import "src:core/eventloop"
 import "src:core/node"
 import "src:core/painter"
 import "src:core/input"
+import "src:core/input/mouse"
 import "src:core/hit_test"
 import "src:core/events"
 import "src:core/redraw"
@@ -89,21 +90,31 @@ New :: proc(opts: Init_Options = DEFAULT_OPTIONS) -> ^Window {
             vsync        = opts.vsync,
             msaa_samples = max(opts.msaa_samples, 0),
             transparent  = opts.transparent,
+            retained = opts.frame_mode == .On_Demand || opts.msaa_samples > 1,
         },
         context.allocator,
     )
+    w.redraw_state.partial = opts.frame_mode == .On_Demand && render.RENDERER.retained()
 
     w.painter_state = painter.create_state(context.allocator)
     w.painter = painter.Painter{state = w.painter_state}
     painter.init(w.painter, context.allocator)
 
     w.scale = PLATFORM.content_scale()
+    w.redraw_state.scale = w.scale
+    w.frame_interval = _frame_interval()
 
     w.root = node.New()
     input.init(&w.input, w.root, &w.bus, w)
+    node.freed_hook = _forget_freed_node
     input.set_clipboard_procs({get = PLATFORM.clipboard_get, set = PLATFORM.clipboard_set})
     PLATFORM.set_window_user_ptr(w.platform_state, cast(rawptr)(w))
     return w
+}
+
+@(private)
+_forget_freed_node :: proc(n: ^node.BaseNode) {
+    if w := cast(^Window)n.window; w != nil do input.forget(&w.input, n)
 }
 
 @(private)
@@ -143,7 +154,7 @@ update :: proc(w: ^Window) -> bool {
     make_current(w)
     if !_continue_after_close_request(w) do return false
     poll_start := common.profile_begin(.Poll)
-    PLATFORM.poll_events()
+    _pace(w)
     common.profile_end(.Poll, poll_start)
 
     if !_continue_after_close_request(w) do return false
@@ -151,6 +162,9 @@ update :: proc(w: ^Window) -> bool {
     input.set_context(&w.input)
 
     hit_test.invalidate()
+    selected, selection := w.input.selection.valid, w.input.selection.range
+    defer if w.input.selection.valid != selected || w.input.selection.range != selection do redraw.mark()
+    input.selection_tick(&w.input, time.tick_now())
     dispatch_start := common.profile_begin(.Dispatch)
     for ev, i in w.queue {
         if _, is_move := ev.(MOUSE_MOVED); is_move && i + 1 < len(w.queue) {
@@ -159,9 +173,62 @@ update :: proc(w: ^Window) -> bool {
         handle(w, ev)
     }
     clear(&w.queue)
+    _raw_mouse_sync()
+    mouse.publish()
     sync_click_through(w)
     common.profile_end(.Dispatch, dispatch_start)
     return true
+}
+
+@(private = "file")
+_frame_interval :: proc() -> time.Duration {
+    rate := PLATFORM.refresh_rate()
+    if rate <= 0 do rate = 60
+    return time.Second / time.Duration(rate)
+}
+
+// A frame that paints nothing does not wait for the display, so the wait happens
+// here: one tick per display frame, or per IDLE_INTERVAL once nothing has
+// happened for IDLE_AFTER.
+@(private = "file")
+_pace :: proc(w: ^Window) {
+    s := &w.redraw_state
+    if s.mode == .Continuous || ODIN_OS == .JS {
+        PLATFORM.poll_events()
+        if len(w.queue) > 0 do w.input_at = time.tick_now()
+        return
+    }
+
+    // A shown window that just painted already waited for the display in its swap. A timed
+    // wait on top of that is rounded up to the system timer period, which drops display
+    // frames and makes an animation stutter. A minimized window's swap waits for nothing.
+    minimized := PLATFORM.is_minimized()
+    if !minimized && time.tick_diff(w.tick_at, s.last_paint) >= 0 {
+        PLATFORM.poll_events()
+        w.tick_at = time.tick_now()
+        if len(w.queue) > 0 do w.input_at = w.tick_at
+        return
+    }
+
+    now := time.tick_now()
+    soonest := time.tick_add(w.tick_at, w.frame_interval)
+    wake := soonest
+    active := w.input_at if time.tick_diff(w.input_at, s.last_paint) < 0 else s.last_paint
+    idle := minimized || (!redraw.dirty() && time.tick_diff(active, now) > IDLE_AFTER)
+    if idle {
+        wake = time.tick_add(w.tick_at, IDLE_INTERVAL)
+        if due, ok := eventloop.next_due(w.loop); ok && time.tick_diff(due, wake) > 0 do wake = due
+        if time.tick_diff(wake, soonest) > 0 do wake = soonest
+    }
+    for {
+        left := time.tick_diff(time.tick_now(), wake)
+        if left <= 0 do break
+        PLATFORM.wait_events(time.duration_seconds(left))
+        if idle && (len(w.queue) > 0 || (!minimized && redraw.dirty())) do wake = soonest
+    }
+    PLATFORM.poll_events()
+    w.tick_at = time.tick_now()
+    if len(w.queue) > 0 do w.input_at = w.tick_at
 }
 
 // block window from closing if the app refuse to close
@@ -178,6 +245,7 @@ _continue_after_close_request :: proc(w: ^Window) -> bool {
 make_current :: proc(w: ^Window) {
     _active_window = w
     input.set_context(&w.input)
+    redraw.set_current(&w.redraw_state)
     PLATFORM.set_active_state(w.platform_state)
     render.RENDERER.set_active_state(w.renderer_state)
     render.RENDERER.make_current()
@@ -203,6 +271,9 @@ sync_size :: proc(w: ^Window) {
         w.width = nw
         w.height = nh
         w.scale = next_scale
+        w.redraw_state.scale = next_scale
+        w.frame_interval = _frame_interval()
+        redraw.mark()
         render.RENDERER.resize(nw, nh)
         resize_event := events.Window_Resize_Event {
             width  = nw,
@@ -218,8 +289,18 @@ refresh :: proc(w: ^Window) {
     prev := scoped_current(w)
     defer restore_current(prev)
     sync_size(w)
+    redraw.mark()
     _emit_window(w, events.WINDOW_REFRESH_EVENT)
     if w.on_refresh != nil do w.on_refresh(w)
+}
+
+// Asks for a paint from any thread, for a change the window's own thread cannot see.
+request_frame :: proc(w: ^Window) {
+    if w != nil do redraw.request(&w.redraw_state)
+}
+
+frame_stats :: proc(w: ^Window) -> Frame_Stats {
+    return w.redraw_state.stats if w != nil else {}
 }
 
 close :: proc(w: ^Window) {

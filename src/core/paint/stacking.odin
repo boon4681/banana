@@ -9,7 +9,7 @@ Node :: node.BaseNode
 
 Stacking_Context :: struct {
     node: ^Node,
-    // Composed transform state for this prepared frame.
+    // the transforms from the root down to this context, for this frame
     local:      common.Mat3x3,
     world:      common.Mat3x3,
     inverse:    common.Mat3x3,
@@ -20,14 +20,15 @@ Stacking_Context :: struct {
     clips: []^Node,
     neg:   []Stacking_Context,
     pos:   []Stacking_Context,
+    bars:  []Pending,
 }
 
 is_stacking_context :: proc(n: ^Node) -> bool {
     if n.parent == nil do return true
-    if n.creates_stacking_context do return true
-    if n.z_index != 0 do return true
-    if n.transform != common.IDENTITY_TRANSFORM do return true
-    return false
+    if n.creates_stacking_context || n.z_index != 0 do return true
+    if n._internal_style == nil do return false
+    s := cast(^node.Style)n._internal_style
+    return s.filter != nil || s.sticky != nil || s.fixed || s.transform != common.IDENTITY_TRANSFORM
 }
 
 build :: proc(root: ^Node, allocator := context.temp_allocator) -> Stacking_Context {
@@ -42,7 +43,7 @@ Pending :: struct {
 
 @(private)
 build_ctx :: proc(n: ^Node, clips: []^Node, parent_world: common.Mat3x3, allocator: runtime.Allocator) -> Stacking_Context {
-    local := common.transform_at_matrix(n.transform, {n.rect.x, n.rect.y})
+    local := common.transform_at_matrix(node.Resolve_Transform(n),{n.rect.x, n.rect.y})
     world := parent_world * local
     inverse, invertible := common.affine_inverse(world)
     clip_inverse, clip_invertible := common.affine_inverse(parent_world)
@@ -60,9 +61,11 @@ build_ctx :: proc(n: ^Node, clips: []^Node, parent_world: common.Mat3x3, allocat
     neg := make([dynamic]Pending, context.temp_allocator)
     pos := make([dynamic]Pending, context.temp_allocator)
     clip_stack := make([dynamic]^Node, context.temp_allocator)
-    collect(n, &clip_stack, &neg, &pos, allocator)
+    bars := make([dynamic]Pending, allocator)
+    collect(n, &clip_stack, &neg, &pos, &bars, allocator)
+    ctx.bars = bars[:]
 
-    // Stable: CSS keeps tree order for equal z-index.
+    // stable sort cuz css keep tree order for equal z-index
     slice.stable_sort_by(neg[:], less_z)
     slice.stable_sort_by(pos[:], less_z)
 
@@ -77,18 +80,22 @@ build_ctx :: proc(n: ^Node, clips: []^Node, parent_world: common.Mat3x3, allocat
 collect :: proc(
     n: ^Node,
     clip_stack: ^[dynamic]^Node,
-    neg, pos: ^[dynamic]Pending,
+    neg, pos, bars: ^[dynamic]Pending,
     allocator: runtime.Allocator
 ) {
     for c in n.children {
         if c.freed || node.is_hidden(c) do continue
         if is_stacking_context(c) {
-            p := Pending{node = c, clips = slice.clone(clip_stack[:], allocator)}
+            // a fixed node is placed from the window, so the boxes around it dont clip it
+            p := Pending{node = c, clips = nil if node.Resolve_Fixed(c) else slice.clone(clip_stack[:], allocator)}
             append(c.z_index < 0 ? neg : pos, p)
         } else {
             pushed := c.clip_mode != .None
             if pushed do append(clip_stack, c)
-            collect(c, clip_stack, neg, pos, allocator)
+            if c.scroll != nil && c.scroll.draw != nil {
+                append(bars, Pending{node = c, clips = slice.clone(clip_stack[:], allocator)})
+            }
+            collect(c, clip_stack, neg, pos, bars, allocator)
             if pushed do pop(clip_stack)
         }
     }

@@ -30,6 +30,7 @@ Overlay :: struct {
     tip_name:  Label,
     tip_size:  Label,
     tip_shown: bool,
+    tip_at:    [2]f32,
 }
 
 overlay_build :: proc(ov: ^Overlay, font: ^node.Font) {
@@ -37,9 +38,9 @@ overlay_build :: proc(ov: ^Overlay, font: ^node.Font) {
     ov.root.z_index = OVERLAY_Z
     ov.root.creates_stacking_context = true
     ov.root->style()->
-        set_position_type(.Absolute)->
-        set_position_left(0)->
-        set_position_top(0)->
+        set_position(.Absolute)->
+        set_left(0)->
+        set_top(0)->
         set_width(100, node.percent)->
         set_height(100, node.percent)->
         set_pointer_events(.None)
@@ -48,24 +49,25 @@ overlay_build :: proc(ov: ^Overlay, font: ^node.Font) {
     node.Init(ov.paint, "highlight")
     own_style(auto_cast(ov.paint))
     ov.paint.draw = transmute(proc(self: ^node.BaseNode))_highlight_draw
+    ov.paint.paint_box = transmute(proc(self: ^node.BaseNode) -> common.Rect)_highlight_box
     ov.paint.on_free = transmute(proc(self: ^node.BaseNode))_highlight_free
     ov.paint->style()->
-        set_position_type(.Absolute)->
-        set_position_left(0)->
-        set_position_top(0)->
+        set_position(.Absolute)->
+        set_left(0)->
+        set_top(0)->
         set_width(0)->
         set_height(0)
 
     ov.tip = box.New({background = Color{28, 29, 32, 244}, radius = 4}, "tip")
     ov.tip->style()->
-        set_position_type(.Absolute)->
-        set_position_left(0)->
-        set_position_top(0)->
+        set_position(.Absolute)->
+        set_left(0)->
+        set_top(0)->
         set_flex_direction(.Row)->
         set_align_items(.Center)->
-        set_gap_all(8)->
-        set_padding_x(8)->
-        set_padding_y(4)->
+        set_gap(8)->
+        set_padding_inline(8)->
+        set_padding_block(4)->
         set_display(.None)->
         set_font(font)->
         set_font_size(11)
@@ -82,8 +84,30 @@ _highlight_free :: proc(self: ^Highlight) {
     free(self._internal_style)
 }
 
+// The box around everything a fragment put on screen.
+@(private = "file")
+_members_rect :: proc(n: ^node.BaseNode) -> (r: common.Rect, any: bool) {
+    for member in n.children {
+        box, shown := member.rect, !node.is_hidden(member)
+        if member.structural do box, shown = _members_rect(member)
+        if !shown do continue
+        if !any {
+            r, any = box, true
+            continue
+        }
+        right, bottom := max(r.x + r.w, box.x + box.w), max(r.y + r.h, box.y + box.h)
+        r.x, r.y = min(r.x, box.x), min(r.y, box.y)
+        r.w, r.h = right - r.x, bottom - r.y
+    }
+    return
+}
+
 metrics_of :: proc(n: ^node.BaseNode) -> (m: Metrics) {
     if n == nil || n.freed do return
+    if n.structural {
+        m.border_box, m.valid = _members_rect(n)
+        return
+    }
     m.border_box = n.rect
     m.margin = {
         YG.NodeLayoutGetMargin(n.raw, .Left),
@@ -129,7 +153,18 @@ overlay_set_tip :: proc(ov: ^Overlay, name: string, m: Metrics, viewport: [2]f32
     if y + h > viewport.y do y = m.border_box.y - m.margin[1] - h - 4
     if y < 0 do y = m.border_box.y + 4
     x = clamp(x, 2, max(2, viewport.x - w - 2))
-    ov.tip->style()->set_position_left(x)->set_position_top(y)
+    // Called every tick while a node is highlighted; placing it again would paint every frame.
+    if ov.tip_at == {x, y} do return
+    ov.tip_at = {x, y}
+    ov.tip->style()->set_left(x)->set_top(y)
+}
+
+// The highlight has no size of its own: it draws over the node it points at.
+@(private = "file")
+_highlight_box :: proc(self: ^Highlight) -> common.Rect {
+    if !self.hover.valid do return {}
+    b, m := self.hover.border_box, self.hover.margin
+    return {b.x - m[0] - 1, b.y - m[1] - 1, b.w + m[0] + m[2] + 2, b.h + m[1] + m[3] + 2}
 }
 
 @(private = "file")

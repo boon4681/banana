@@ -4,23 +4,24 @@ Init_Options :: struct {
     vsync:        bool,
     msaa_samples: u32,
     transparent:  bool,
-    retained:     bool, // Frames are drawn into a target that keeps its pixels, so a frame can redraw part of the window.
+    retained:     bool, // draw into a target that keep its pixels, so a frame can redraw only part of the window
 }
 
-// Unify api for renderer to interact with platform state; see src/platform
+// how the renderer talk to the platform window, see src/platform
 Render_Interface :: struct {
     state:            rawptr,
     make_context:     proc(state: rawptr, opts: Init_Options) -> bool,
-    make_current:     proc(state: rawptr), // Re-binds this window's context on the thread (multi-window). May be nil on APIs without context state (D3D11/Metal).
+    make_current:     proc(state: rawptr), // rebind this window's context on the thread for multi-window, can be nil on apis with no context state like D3D11 or Metal
     present:          proc(state: rawptr),
     resize:           proc(state: rawptr, w, h: i32),
     destroy:          proc(state: rawptr),
     get_proc_address: proc(state: rawptr, name: cstring) -> rawptr,
+    // the OS window (an HWND on Windows), for backends that present to it themselves
+    native_window:    proc(state: rawptr) -> rawptr,
 }
 
-// CPU-resident image data with an optional lazily-created GPU texture.
-// Window-owned images keep `data` alive while their GPU texture may be
-// uploaded and unloaded independently.
+// image pixels kept in RAM, with a GPU texture made from them when first needed
+// the GPU copy can be uploaded and unloaded without touching data
 Image :: struct {
     texture: Texture,
     data:    []u8,
@@ -29,15 +30,15 @@ Image :: struct {
     format:  Pixel_Format,
 }
 
-// Render Target data;
+// a texture you can draw into, or the screen
 Render_Target :: struct {
     idx:       Texture,
     w:         u32,
     h:         u32,
-    is_screen: bool // fbo 0
+    is_screen: bool // the window's default framebuffer
 }
 
-// Texture index;
+// handle to a backend texture, 0 is invalid
 Texture               :: distinct u32
 
 Pixel_Format          :: enum { RGBA8, BGRA8, R8, A8 }

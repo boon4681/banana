@@ -68,6 +68,9 @@ Flex_Pin :: struct {
 // scroll hook live in this file cuz core/scroll import node
 scrollable_changed: proc(n: ^BaseNode, x, y: bool)
 
+// Input keeps raw node pointers and imports node, so it learns of a free through this.
+freed_hook: proc(n: ^BaseNode)
+
 BaseNode :: struct {
     raw:                YG.NodeRef,
     window:             rawptr,
@@ -656,6 +659,7 @@ _queue_free :: proc(self: ^BaseNode) -> Node_Error {
 _node_free :: proc(self: ^BaseNode) {
     if self == nil || self.freed do return
     self.freed = true
+    if freed_hook != nil do freed_hook(self)
 
     if owner := self.owner; owner != nil {
         if at := _node_index_of(owner, self); at >= 0 do ordered_remove(&owner.children, at)
@@ -680,6 +684,7 @@ _node_free :: proc(self: ^BaseNode) {
 
     self->run_hooks(.Before_Free)
     _destroy_hooks(self)
+    if self._internal_style != nil do _style_release(cast(^Style)self._internal_style)
     if self.on_free != nil do self.on_free(self)
     events.bus_destroy(&self.bus)
     _node_free_flex_pin(self)

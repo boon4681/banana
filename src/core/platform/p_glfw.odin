@@ -12,12 +12,16 @@ import "src:core/platform/wheel"
 import glfw "vendor:glfw"
 
 @(private = "file")
+DIRECTX :: render.RENDERER_NAME == "d3d11"
+
+@(private = "file")
 GLFW_State :: struct {
     handle:  glfw.WindowHandle,
-    visible: bool
+    visible: bool,
+    vsync:   bool,
 }
 
-GLFW_STATE   :: GLFW_State // this is exceptional for native_frame 
+GLFW_STATE   :: GLFW_State // this is exceptional for native_frame
 GLFW_RELEASE :: glfw.RELEASE
 GLFW_PRESS   :: glfw.PRESS
 GLFW_REPEAT  :: glfw.REPEAT
@@ -59,8 +63,8 @@ _set_active_state :: proc(state: rawptr) {
 
 @(private = "file")
 _init :: proc(
-	state: rawptr,
-	opts: Init_Options,
+	state:     rawptr,
+	opts:      Init_Options,
 	allocator: runtime.Allocator,
 ) -> render.Render_Interface {
     _active = cast(^GLFW_State)(state)
@@ -71,7 +75,7 @@ _init :: proc(
     glfw.WindowHint(glfw.CONTEXT_VERSION_MINOR, 3)
     glfw.WindowHint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
     glfw.WindowHint(glfw.OPENGL_FORWARD_COMPAT, 1)
-    direct := !opts.transparent
+    direct := !opts.transparent && opts.frame_mode != .On_Demand && opts.msaa_samples <= 1
     samples := i32(opts.msaa_samples) if direct && opts.msaa_samples > 1 else 0
     glfw.WindowHint(glfw.SAMPLES, samples)
     glfw.WindowHint(glfw.SRGB_CAPABLE, direct ? 1 : 0)
@@ -81,18 +85,26 @@ _init :: proc(
     glfw.WindowHint(glfw.TRANSPARENT_FRAMEBUFFER, opts.transparent ? 1 : 0)
     _active.visible = false
     glfw.WindowHint(glfw.VISIBLE, 0)
+    glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API if DIRECTX else glfw.OPENGL_API)
     _active.handle = glfw.CreateWindow(i32(opts.width), i32(opts.height), opts.title, nil, nil)
     if _active.handle == nil do panic("window glfw: CreateWindow failed")
+    when ODIN_OS == .Windows && DIRECTX {
+        region := CreateRectRgn(0, 0, -1, -1)
+        blur := DWM_BLURBEHIND{dwFlags = 0x1 | 0x2, fEnable = 1, hRgnBlur = region} // ENABLE | BLURREGION
+        DwmEnableBlurBehindWindow(glfw.GetWin32Window(_active.handle), &blur)
+        DeleteObject(region)
+    }
     intrinsics.atomic_add(&_live_windows, 1)
 
     return render.Render_Interface {
-        state            = cast(rawptr)(_active.handle),
+        state            = cast(rawptr)(_active),
         make_context     = _make_context,
         make_current     = _make_current,
         present          = _present,
         resize           = _resize,
         destroy          = _destroy,
         get_proc_address = _get_proc_address,
+        native_window    = _native_window,
     }
 }
 
@@ -123,11 +135,13 @@ _should_close :: proc() -> bool {
 
 @(private = "file")
 _poll_events :: proc() {
+    _raw_mouse_read()
     glfw.PollEvents()
 }
 
 @(private = "file")
 _wait_events :: proc(seconds: f64) {
+    _raw_mouse_read()
     if seconds <= 0 {
         glfw.PollEvents()
         return
@@ -410,7 +424,7 @@ _cursor_pos_callback :: proc "c" (handle: glfw.WindowHandle, xpos, ypos: f64) {
     w.input.mouse_y = f32(ypos) * sy / cs
     _push_event(w, MOUSE_MOVED {
         x = w.input.mouse_x,
-        y = w.input.mouse_y
+        y = w.input.mouse_y,
     })
 }
 
@@ -454,7 +468,10 @@ _scroll_callback :: proc "c" (handle: glfw.WindowHandle, dx, dy: f64) {
 
 @(private="file")
 _make_context :: proc(state: rawptr, opts: render.Init_Options) -> bool {
-    glfw.MakeContextCurrent(cast(glfw.WindowHandle)(state))
+    s := cast(^GLFW_State)(state)
+    s.vsync = opts.vsync
+    when DIRECTX do return true
+    glfw.MakeContextCurrent(s.handle)
     _current_context = state
     glfw.SwapInterval(opts.vsync ? 1 : 0)
     return true
@@ -462,21 +479,30 @@ _make_context :: proc(state: rawptr, opts: render.Init_Options) -> bool {
 
 @(private="file")
 _make_current :: proc(state: rawptr) {
+    when DIRECTX do return
     if _current_context == state do return
-    glfw.MakeContextCurrent(cast(glfw.WindowHandle)(state))
+    glfw.MakeContextCurrent((cast(^GLFW_State)(state)).handle)
     _current_context = state
 }
 
 @(private="file")
 _present :: proc(state: rawptr) {
-    swap_start := common.profile_begin(.Swap)
-    glfw.SwapBuffers(cast(glfw.WindowHandle)(state))
-    common.profile_end(.Swap, swap_start)
-
-    if _active.visible == false {
-        glfw.ShowWindow(cast(glfw.WindowHandle)(state))
-        _active.visible = true
+    s := cast(^GLFW_State)(state)
+    when DIRECTX {
+        _show_once(s)
+        return
     }
+    swap_start := common.profile_begin(.Swap)
+    glfw.SwapBuffers(s.handle)
+    common.profile_end(.Swap, swap_start)
+    _show_once(s)
+}
+
+@(private="file")
+_show_once :: proc(s: ^GLFW_State) {
+    if s.visible do return
+    glfw.ShowWindow(s.handle)
+    s.visible = true
 }
 
 @(private="file")
@@ -484,6 +510,36 @@ _resize :: proc(state: rawptr, w, h: i32) {}
 
 @(private="file")
 _destroy :: proc(state: rawptr) {}
+
+@(private="file")
+_native_window :: proc(state: rawptr) -> rawptr {
+    when ODIN_OS == .Windows do return rawptr(glfw.GetWin32Window((cast(^GLFW_State)(state)).handle))
+    else do return nil
+}
+
+when ODIN_OS == .Windows {
+    foreign import dwmapi "system:Dwmapi.lib"
+    foreign import gdi32 "system:Gdi32.lib"
+
+    @(default_calling_convention = "system", private = "file")
+    foreign dwmapi {
+        DwmEnableBlurBehindWindow :: proc(hwnd: rawptr, bb: ^DWM_BLURBEHIND) -> i32 ---
+    }
+
+    @(default_calling_convention = "system", private = "file")
+    foreign gdi32 {
+        CreateRectRgn :: proc(x1, y1, x2, y2: i32) -> rawptr ---
+        DeleteObject  :: proc(object: rawptr) -> i32 ---
+    }
+
+    @(private = "file")
+    DWM_BLURBEHIND :: struct {
+        dwFlags:                u32,
+        fEnable:                i32,
+        hRgnBlur:               rawptr,
+        fTransitionOnMaximized: i32,
+    }
+}
 
 @(private="file")
 _get_proc_address :: proc(state: rawptr, name: cstring) -> rawptr {

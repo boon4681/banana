@@ -2,8 +2,8 @@ package input
 
 import "base:runtime"
 
-// Backed by the platform; wired at window creation.
-// the OS clipboard is process-wide state.
+// how banana reaches the OS clipboard, the platform fills this in when the window is created.
+// if get or set is nil, copy and paste just do nothing.
 Clipboard :: struct {
     get: proc(allocator: runtime.Allocator) -> string,
     set: proc(text: string),

@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:math"
 import "core:strings"
 import "src:core/common"
+import "src:core/events"
 import "src:core/hit_test"
 import "src:core/node"
 import "src:ui/box"
@@ -40,6 +41,7 @@ Style_View :: struct {
     size:    Label,
     props:   [len(Prop_Key)]Prop,
     swatch:  ^Icon,
+    editor:  Editor,
 }
 
 Prop_Key :: enum {
@@ -118,13 +120,14 @@ styles_build :: proc(v: ^Style_View) -> ^scroll_area.Scroll_Area {
     v.heading = label("no element selected", TEXT_DIM, FONT_SIZE)
     header->add(v.heading.root)
     v.scroll->add(header)
+    v.scroll->add(editor_build(&v.editor))
 
     frame := box.New({}, "box-model")
     frame->style()->
         set_width(100, node.percent)->
         set_flex_shrink(0)->
         set_height(196)->
-        set_wrap(.NoWrap)->
+        set_flex_wrap(.NoWrap)->
         set_align_items(.Stretch)->
         set_padding_left(10)->
         set_padding_right(SCROLLBAR_GUTTER)->
@@ -161,11 +164,12 @@ styles_build :: proc(v: ^Style_View) -> ^scroll_area.Scroll_Area {
             set_width(100, node.percent)->
             set_padding_left(10)->
             set_padding_right(SCROLLBAR_GUTTER)->
-            set_padding_y(2)->
+            set_padding_block(2)->
             set_justify_content(.SpaceBetween)->
-            set_gap_all(10)
+            set_gap(10)
         p.name = label(PROP_NAMES[key], TEXT_DIM, FONT_SIZE)
         p.value = label("-", TEXT, FONT_SIZE)
+        p.root->on(events.MOUSE_CLICK_EVENT, prop_row_click)
         p.root->add(p.name.root)
         if key == .Color {
             v.swatch = icon(.Swatch, 9, Color{})
@@ -189,13 +193,13 @@ _band :: proc(color: Color, name: string) -> (b: Band) {
     b.tint = color
     b.lit = true
     b.root = frame_box(color, BAND_EDGE, "band")
-    b.root->style()->set_flex_grow(1)->set_padding_all(1)
+    b.root->style()->set_flex_grow(1)->set_padding(1)
 
     b.tag = label(name, ON_BAND, FONT_SIZE_SM)
     b.tag.root->style()->
-        set_position_type(.Absolute)->
-        set_position_left(6)->
-        set_position_top(3)
+        set_position(.Absolute)->
+        set_left(6)->
+        set_top(3)
 
     top := row_box()
     top->style()->set_height(17)->set_justify_content(.Center)->set_align_items(.Center)
@@ -238,6 +242,14 @@ _band :: proc(color: Color, name: string) -> (b: Band) {
 
 styles_update :: proc(v: ^Style_View, snap: ^Snapshot, id: Node_Id) {
     index := find_index(snap, id)
+    v.editor.text_id = 0
+    if index >= 0 {
+        if snap.nodes[index].text_like {
+            v.editor.text_id = id
+        } else if snap.nodes[index].child_count == 1 && index + 1 < len(snap.nodes) && snap.nodes[index + 1].text_like {
+            v.editor.text_id = snap.nodes[index + 1].id
+        }
+    }
     if index < 0 {
         label_set(v.heading, "no element selected")
         label_color(v.heading, TEXT_DIM)
@@ -252,13 +264,7 @@ styles_update :: proc(v: ^Style_View, snap: ^Snapshot, id: Node_Id) {
     }
 
     e := snap.nodes[index]
-    key := str(snap, e.key)
-    name := str(snap, e.name)
-    if key == "" {
-        label_set(v.heading, name)
-    } else {
-        label_set(v.heading, strings.concatenate({name, " #", key}, context.temp_allocator))
-    }
+    label_set(v.heading, selector_text(snap, e))
     label_color(v.heading, TAG)
 
     _band_set(v.margin, e.margin)
@@ -387,6 +393,13 @@ _len_str :: proc(l: Len) -> string {
     case .Point:   return _num(l.value)
     }
     return "-"
+}
+
+css_keyword :: proc($T: typeid, text: string) -> (T, bool) {
+    for value in T {
+        if _css(value) == text do return value, true
+    }
+    return {}, false
 }
 
 @(private = "file")
