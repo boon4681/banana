@@ -63,9 +63,15 @@ analyze :: proc(str: []rune, language: string, out: []Break_Info) -> (has_phrase
     if model != .None {
         phrase := make([]u8, n + 1, context.temp_allocator)
         banana_budoux_breaks_utf32(text, c.size_t(n), model, raw_data(phrase))
+        // UAX #14 LB1 leaves breaks inside SA runs (Thai, Lao, Khmer...) to a dictionary.
+        // libunibreak has none and resolves SA to AL, so the model is that dictionary here.
+        banana_complex_context_utf32(text, c.size_t(n), lang, raw_data(scratch))
         for value, i in phrase {
-            // A model is only usable when unicode also permits the break at that position.
-            out[i].phrase = value != 0 && out[i].line && out[i].grapheme
+            if value == 0 || !out[i].grapheme do continue
+            if !out[i].line && i > 0 && i < n && scratch[i - 1] != 0 && scratch[i] != 0 {
+                out[i].line = true
+            }
+            out[i].phrase = out[i].line
         }
         return true, true
     }
@@ -98,5 +104,6 @@ foreign textbreak {
     @(link_name = "set_linebreaks_utf32")
     set_linebreaks_utf32       :: proc(str: [^]u32, len: c.size_t, language: cstring, breaks: [^]u8) ---
     banana_budoux_breaks_utf32 :: proc(str: [^]u32, len: c.size_t, model: Budoux_Model, breaks: [^]u8) ---
+    banana_complex_context_utf32 :: proc(str: [^]u32, len: c.size_t, language: cstring, out: [^]u8) ---
 }
 

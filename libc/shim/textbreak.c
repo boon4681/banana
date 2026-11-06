@@ -3,6 +3,14 @@
 #include <string.h>
 
 #include "budoux.h"
+#include "linebreakdef.h"
+
+void banana_complex_context_utf32(const uint32_t *text, size_t length, const char *lang, uint8_t *out) {
+    struct LineBreakContext ctx;
+    if (!text || length == 0) return;
+    lb_init_break_context(&ctx, text[0], lang);
+    for (size_t i = 0; i < length; i++) out[i] = lb_get_char_class(&ctx, text[i]) == LBP_SA;
+}
 
 enum {
     BANANA_BUDOUX_NONE,
