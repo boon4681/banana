@@ -9,8 +9,6 @@ BANANA_COMPONENT_TYPE :: ^Box
 
 Box_Style :: struct {
     using base: node.Style,
-    background: Color,
-    radius:     f32,
 }
 
 Box :: struct {
@@ -43,7 +41,7 @@ _from_signal :: proc(s: ^events.Event_Signal) -> ^Box {
 _apply_div_defaults :: proc(n: ^Box) {
     s := n->style()
     s->set_flex_direction(.Row)
-    s->set_wrap(.Wrap)
+    s->set_flex_wrap(.Wrap)
     s->set_align_items(.FlexStart)
     s->set_align_content(.FlexStart)
     s->set_flex_shrink(1)
@@ -52,6 +50,7 @@ _apply_div_defaults :: proc(n: ^Box) {
 
 @(private="file")
 _get_style :: proc(self: ^Box) -> ^Box_Style {
+    self->damage()
     return auto_cast(self._internal_style)
 }
 
@@ -65,7 +64,13 @@ _on_down :: proc(s: ^events.Event_Signal) {
 @(private="file")
 _box_draw :: proc(self: ^Box) {
     style := self->style()
-    painter.rect(painter.get(), self.rect, style.background, style.radius)
+    radius := node.Resolve_Corner_Radius(self)
+    p := painter.get()
+    painter.decoration_under(p, self.rect, radius, style.decoration)
+    painter.rect(p, self.rect, style.background, radius)
+    painter.decoration_fill(p, self.rect, radius, style.decoration)
+    painter.border_sides(p, self.rect, style.border_color, style.border_width, radius)
+    painter.decoration_over(p, self.rect, radius, style.decoration)
 }
 
 @(private="file")

@@ -2,11 +2,13 @@ package text_node
 
 import "core:math"
 import "core:strings"
+import "core:unicode"
 import "src:core/common"
 import "src:core/input"
 import "src:core/node"
 import "src:core/painter"
 import "src:core/text"
+import YG "src:yoga"
 
 // A DOM-like text node
 Text_Node :: struct {
@@ -23,6 +25,9 @@ _Text_Data :: struct {
     shaped:        text.Shaped_Text,
     shaped_font:   ^text.Font_Set, // font the current shaping was done with
     shaped_weight: text.FontWeight,
+    shaped_transform: node.Text_Transform,
+    shaped_spacing: f32,
+    shaped_fit:     f32,
 
     lines:          []text.Line,
     lines_max_w_em: f32,
@@ -40,6 +45,7 @@ _Text_Data :: struct {
     quad_weight:    text.FontWeight,
     quad_line_h:    f32,
     quad_scale_y:   f32,
+    quad_align:     f32,
     quads_valid:    bool,
     quad_version:   u64,
     glyph_cache:    painter.Glyph_Cache,
@@ -75,6 +81,7 @@ New :: proc(str: string = "", key: Maybe(string) = nil) -> ^Text_Node {
     n.draw = transmute(proc(self: ^Node))_draw
     n.on_free = transmute(proc(self: ^Node))_free
     n.measure = transmute(node.MeasureCallback)_measure
+    n.min_content = transmute(proc(self: ^Node) -> [2]f32)_min_content
     n.text_content = &_TEXT_CONTENT_INTERFACE
     n->apply_measure()
 
@@ -137,13 +144,17 @@ _invalidate_layout :: proc(d: ^_Text_Data) {
 // Shaping and line-breaking are lazy, so a hit-test arriving before the first
 // draw has to bring both up to date itself.
 @(private = "file")
-_ensure_current :: proc(self: ^Text_Node) -> (^_Text_Data, node.Text_Style, []text.Line, bool) {
+_ensure_current :: proc(self: ^Text_Node, laying_out := false) -> (^_Text_Data, node.Text_Style, []text.Line, bool) {
     st := _resolve(self)
-    _ensure_shaped(self, st.font, st.font_weight)
+    _ensure_shaped(self, st)
     d := _data(self)
     if st.font == nil do return d, st, nil, false
 
-    max_w_em := _resolve_layout_width_em(d.measured_w_em, d.measured_w_valid, self.rect.w, st.font_size)
+    // While layout settles, `rect` is still the previous layout's: a text that just
+    // grew would be wrapped at its old width and reported a line too tall.
+    width := YG.NodeLayoutGetWidth(self.raw) if laying_out else self.rect.w
+    max_w_em := _resolve_layout_width_em(d.measured_w_em, d.measured_w_valid, width, st.font_size)
+    if !_wraps(st) do max_w_em = math.F32_MAX
     return d, st, _ensure_lines(d, max_w_em), true
 }
 
@@ -166,7 +177,17 @@ _metrics :: proc(st: node.Text_Style, r: common.Rect) -> text.Layout_Metrics {
     return text.Layout_Metrics{
         line_height = _line_height_em(st),
         max_w       = r.w / st.font_size if st.font_size > 0 else 0,
+        align       = _align(st),
     }
+}
+
+@(private = "file")
+_align :: proc(st: node.Text_Style) -> f32 {
+    #partial switch st.align {
+    case .Center: return 0.5
+    case .Right:  return 1
+    }
+    return 0
 }
 
 @(private = "file")
@@ -192,23 +213,141 @@ _expand_selection :: proc(self: ^Text_Node, pos: text.Position, g: text.Granular
 @(private = "file")
 _resolve :: proc(self: ^Text_Node) -> node.Text_Style {
     out := node.Resolve_Text_Style(self)
-    if out.font_size <= 0 do out.font_size = 16
-    if out.color == {} do out.color = {255, 255, 255, 255}
+    if !out.computed {
+        if out.font_size <= 0 do out.font_size = 16
+        if out.color == {} do out.color = {255, 255, 255, 255}
+    }
     return out
 }
 
 // Shaping is lazy: at construction the node has no parent yet, so the font is
 // unknown until measure/draw. Re-shapes if the inherited font changed.
 @(private = "file")
-_ensure_shaped :: proc(self: ^Text_Node, font: ^text.Font_Set, weight: text.FontWeight) {
+_ensure_shaped :: proc(self: ^Text_Node, st: node.Text_Style) {
     d := _data(self)
+    font, weight := st.font, st.font_weight
     if font == nil do return
-    if d.shaped_font == font && d.shaped_weight == weight do return
+    spacing := st.letter_spacing / st.font_size if st.font_size > 0 else 0
+    fit := _ellipsis_width_em(self, st)
+    if d.shaped_font == font && d.shaped_weight == weight && d.shaped_transform == st.transform &&
+       d.shaped_spacing == spacing && d.shaped_fit == fit {
+        return
+    }
+    shown := _transformed(d.str, st.transform)
     text.shaped_destroy(&d.shaped)
-    d.shaped = text.shape(font, d.str, weight)
+    d.shaped = text.shape(font, shown, weight)
+    _space_letters(&d.shaped, spacing)
+    if fit > 0 && _shaped_width(&d.shaped) > fit {
+        dots := text.shape(font, "…", weight, context.temp_allocator)
+        _space_letters(&dots, spacing)
+        cut := _fit_prefix(&d.shaped, fit - _shaped_width(&dots))
+        clipped := strings.concatenate({strings.trim_right_space(shown[:cut]), "…"}, context.temp_allocator)
+        text.shaped_destroy(&d.shaped)
+        d.shaped = text.shape(font, clipped, weight)
+        _space_letters(&d.shaped, spacing)
+    }
     d.shaped_font = font
     d.shaped_weight = weight
+    d.shaped_transform = st.transform
+    d.shaped_spacing = spacing
+    d.shaped_fit = fit
     _invalidate_layout(d)
+}
+
+@(private = "file")
+_min_content :: proc(self: ^Text_Node) -> (size: [2]f32) {
+    d, st, lines, ok := _ensure_current(self, true)
+    if st.font == nil || st.font_size <= 0 do return
+    line := _line_height_em(st) * st.font_size
+    if !ok || len(d.shaped.words) == 0 {
+        size.y = line if len(d.str) > 0 else 0
+        return
+    }
+    size.y = f32(len(lines)) * line
+    if !_wraps(st) {
+        if st.overflow != .Ellipsis do size.x = _shaped_width(&d.shaped) * st.font_size
+        return
+    }
+    for word in d.shaped.words do size.x = max(size.x, word.width)
+    size.x *= st.font_size
+    return
+}
+
+@(private = "file")
+_wraps :: proc(st: node.Text_Style) -> bool {
+    return st.white_space != .No_Wrap && st.white_space != .Pre
+}
+
+@(private = "file")
+_ellipsis_width_em :: proc(self: ^Text_Node, st: node.Text_Style) -> f32 {
+    if st.overflow != .Ellipsis || _wraps(st) || self.parent == nil || st.font_size <= 0 do return 0
+    width := self.parent->get_rect(.Content).w
+    return width / st.font_size if width > 0 else 0
+}
+
+@(private = "file")
+_transformed :: proc(s: string, transform: node.Text_Transform) -> string {
+    #partial switch transform {
+    case .Uppercase: return strings.to_upper(s, context.temp_allocator)
+    case .Lowercase: return strings.to_lower(s, context.temp_allocator)
+    case .Capitalize:
+        out := strings.builder_make(0, len(s), context.temp_allocator)
+        start := true
+        for r in s {
+            strings.write_rune(&out, unicode.to_upper(r) if start else r)
+            start = unicode.is_space(r)
+        }
+        return strings.to_string(out)
+    }
+    return s
+}
+
+@(private = "file")
+_space_letters :: proc(shaped: ^text.Shaped_Text, spacing: f32) {
+    if spacing == 0 do return
+    for &word in shaped.words {
+        for &glyph in word.glyphs do glyph.advance += spacing
+        word.width += spacing * f32(len(word.glyphs))
+    }
+    shaped.space_advance += spacing
+}
+
+@(private = "file")
+_shaped_width :: proc(shaped: ^text.Shaped_Text) -> (width: f32) {
+    for word, i in shaped.words {
+        if i > 0 && word.space_before do width += shaped.space_advance
+        width += word.width
+    }
+    return
+}
+
+@(private = "file")
+_fit_prefix :: proc(shaped: ^text.Shaped_Text, limit: f32) -> (cut: int) {
+    width: f32
+    for word, i in shaped.words {
+        if i > 0 && word.space_before do width += shaped.space_advance
+        for glyph in word.glyphs {
+            if width + glyph.advance > limit do return
+            width += glyph.advance
+            cut = max(cut, glyph.cluster_end)
+        }
+    }
+    return
+}
+
+@(private = "file")
+_draw_decoration :: proc(d: ^_Text_Data, p: painter.Painter, st: node.Text_Style, r: common.Rect, lines: []text.Line, lh: f32) {
+    if st.decoration != .Underline && st.decoration != .Line_Through do return
+    size := st.font_size
+    ascent := text.ascent(st.font, st.font_weight)
+    descent := text.descent(st.font, st.font_weight)
+    thickness := max(1, math.round(size / 14))
+    shift := size * 0.12 if st.decoration == .Underline else -size * 0.3
+    for l, i in lines {
+        baseline := r.y + (f32(i) * lh + (lh - (ascent - descent)) * 0.5 + ascent) * size
+        x := r.x + text.line_offset(l, _metrics(st, r)) * size
+        painter.rect(p, {x, math.round(baseline + shift), l.width * size, thickness}, st.color)
+    }
 }
 
 @(private = "file")
@@ -231,11 +370,11 @@ _ensure_lines :: proc(d: ^_Text_Data, max_w_em: f32) -> []text.Line {
 }
 
 // CSS: a length resolves against font-size.
-@(private = "file")
+@(private)
 _line_height_em :: proc(st: node.Text_Style) -> f32 {
-    if st.line_height > 0 {
+    if st.line_height_specified || st.line_height > 0 {
         #partial switch st.line_height_unit {
-        case .Point:   return st.line_height / st.font_size
+        case .Point:   return st.line_height / st.font_size if st.font_size > 0 else 0
         case .Percent: return st.line_height
         }
     }
@@ -293,12 +432,19 @@ _draw_cached :: proc(d: ^_Text_Data, p: painter.Painter, st: node.Text_Style) {
 @(private = "file")
 _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_mode: node.MeasureMode) -> (out_w, out_h: f32) {
     st := _resolve(self)
-    _ensure_shaped(self, st.font, st.font_weight)
+    _ensure_shaped(self, st)
     d := _data(self)
     if st.font == nil do return 0, 0
 
     size := st.font_size
     // Give all-space inline separators one collapsed advance.
+    if size <= 0 {
+        out_w = w if w_mode == .Exactly else 0
+        out_h = st.line_height if st.line_height_specified && st.line_height_unit == .Point else 0
+        if h_mode == .Exactly { out_h = h }
+        else if h_mode == .AtMost { out_h = min(out_h, h) }
+        return
+    }
     if len(d.shaped.words) == 0 {
         if len(d.str) == 0 do return 0, 0
         out_w = d.shaped.space_advance * size
@@ -317,7 +463,7 @@ _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_m
     }
 
     max_w_em := f32(math.F32_MAX)
-    if w_mode != .Undefined && !math.is_nan(w) && w > 0 do max_w_em = w / size
+    if _wraps(st) && w_mode != .Undefined && !math.is_nan(w) && w > 0 do max_w_em = w / size
     d.measured_w_em = max_w_em
     d.measured_w_valid = true
 
@@ -327,6 +473,7 @@ _measure :: proc(self: ^Text_Node, w: f32, w_mode: node.MeasureMode, h: f32, h_m
 
     out_w = widest * size
     out_h = f32(len(lines)) * _line_height_em(st) * size
+    if w_mode == .AtMost && _align(st) > 0 && !math.is_nan(w) && !math.is_inf(w) do out_w = max(out_w, w)
 
     switch w_mode {
     case .Exactly: out_w = w
@@ -347,16 +494,17 @@ _draw :: proc(self: ^Text_Node) {
     defer common.profile_end(.Text_Draw, text_start)
     st := _resolve(self)
     es_start := common.profile_begin(.Ensure_Shaped)
-    _ensure_shaped(self, st.font, st.font_weight)
+    _ensure_shaped(self, st)
     common.profile_end(.Ensure_Shaped, es_start)
     d := _data(self)
-    if st.font == nil || len(d.shaped.words) == 0 do return
+    if st.font == nil || st.font_size <= 0 || len(d.shaped.words) == 0 do return
 
     p := painter.get()
     size := st.font_size
     r := self.rect
 
     max_w_em := _resolve_layout_width_em(d.measured_w_em, d.measured_w_valid, r.w, size)
+    if !_wraps(st) do max_w_em = math.F32_MAX
     el_start := common.profile_begin(.Ensure_Lines)
     lines := _ensure_lines(d, max_w_em)
     common.profile_end(.Ensure_Lines, el_start)
@@ -369,7 +517,8 @@ _draw :: proc(self: ^Text_Node) {
     d.quad_font_size == size &&
     d.quad_weight == st.font_weight &&
     d.quad_line_h == lh &&
-    d.quad_scale_y == scale.y
+    d.quad_scale_y == scale.y &&
+    d.quad_align == _align(st)
 
     when common.FRAME_PROFILE {
         if !d.quads_valid                   do common.profile_count(.Miss_Valid)
@@ -387,6 +536,8 @@ _draw :: proc(self: ^Text_Node) {
     if im != nil && im.selection.valid {
         _draw_selection(self, d, p, st, r, im)
     }
+
+    _draw_decoration(d, p, st, r, lines, lh)
 
     // Skip rebuilding if the geometry is the same.
     if geometry_matches {
@@ -433,7 +584,7 @@ _draw :: proc(self: ^Text_Node) {
         order := make([]int, l.end - l.start, context.temp_allocator)
         text.line_visual_order(&d.shaped, l, order)
 
-        pen := r.x
+        pen := r.x + text.line_offset(l, _metrics(st, r)) * size
         for wi in order {
             word := d.shaped.words[wi]
             if wi != l.start && word.space_before do pen += d.shaped.space_advance * size
@@ -566,6 +717,7 @@ _draw :: proc(self: ^Text_Node) {
     d.quad_weight = st.font_weight
     d.quad_line_h = lh
     d.quad_scale_y = scale.y
+    d.quad_align = _align(st)
     d.quads_valid = true
     d.quad_version += 1
 

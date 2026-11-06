@@ -9,11 +9,9 @@ BANANA_COMPONENT      :: true
 BANANA_COMPONENT_TYPE :: ^Button
 
 Button_Style :: struct {
-    using base:   node.Style,
-    background: Color,
+    using base: node.Style,
     hover:      Color,
     pressed:    Color,
-    radius:     f32,
 }
 
 Button :: struct {
@@ -22,6 +20,8 @@ Button :: struct {
 
     // Fired on a click.
     onclick: proc(self: ^Button),
+
+    set_text: proc(self: ^Button, text: string),
 
     _hovered: bool,
     _pressed: bool,
@@ -48,13 +48,37 @@ New :: proc(text: string = "", style: Button_Style = {}, key: Maybe(string) = ni
     // A convenience for Odin callers only: markup children come through the
     // normal child path, so this stays empty there.
     if text != "" do n->add(text_node.New(text))
+    n.set_text = _set_text
 
     n->on(events.MOUSE_ENTER_EVENT, _on_enter)
     n->on(events.MOUSE_LEAVE_EVENT, _on_leave)
     n->on(events.MOUSE_DOWN_EVENT, _on_down)
     n->on(events.MOUSE_UP_EVENT, _on_up)
     n->on(events.MOUSE_CLICK_EVENT, _on_click)
+    n->on(events.KEY_DOWN_EVENT, _on_key)
+    n.focusable = true
     return n
+}
+
+// The label `New` was given: the first text child, added if there is none yet.
+@(private="file")
+_set_text :: proc(n: ^Button, text: string) {
+    for child in n.children {
+        if child.type_id != typeid_of(text_node.Text_Node) do continue
+        (cast(^text_node.Text_Node)child)->set_text(text)
+        return
+    }
+    if text != "" do n->add(text_node.New(text))
+}
+
+@(private="file")
+_on_key :: proc(s: ^events.Event_Signal) {
+    n := _from_signal(s)
+    e := cast(^events.Key_Event)s.data
+    if s.target != s.current_target || e.repeat do return
+    if e.code != .Enter && e.code != .Space && e.code != .KP_Enter do return
+    if n.onclick != nil do n->onclick()
+    events.prevent_default(s)
 }
 
 @(private="file")
@@ -64,15 +88,16 @@ _apply_defaults :: proc(n: ^Button) {
     s->set_justify_content(.Center)
     s->set_align_items(.Center)
     s->set_flex_shrink(0)
-    s->set_padding_x(16)
-    s->set_padding_y(8)
-    s->set_select_mode(.None)
+    s->set_padding_inline(16)
+    s->set_padding_block(8)
+    s->set_user_select(.None)
     // primary-foreground: neutral-900 on the light primary fill.
     if s->get_color() == {} do s->set_color({23, 23, 23, 255})
 }
 
 @(private="file")
 _get_style :: proc(n: ^Button) -> ^Button_Style {
+    n->damage()
     return auto_cast(n._internal_style)
 }
 
@@ -81,28 +106,37 @@ _from_signal :: proc(s: ^events.Event_Signal) -> ^Button {
     return auto_cast(s.current_target)
 }
 
+// The background follows these two, and nothing else says the button looks different.
+@(private="file")
+_show :: proc(n: ^Button, hovered, pressed: bool) {
+    if n._hovered == hovered && n._pressed == pressed do return
+    n->damage()
+    n._hovered, n._pressed = hovered, pressed
+}
+
 @(private="file")
 _on_enter :: proc(s: ^events.Event_Signal) {
-    _from_signal(s)._hovered = true
+    n := _from_signal(s)
+    _show(n, true, n._pressed)
 }
 
 @(private="file")
 _on_leave :: proc(s: ^events.Event_Signal) {
-    n := _from_signal(s)
-    n._hovered = false
-    n._pressed = false
+    _show(_from_signal(s), false, false)
 }
 
 @(private="file")
 _on_down :: proc(s: ^events.Event_Signal) {
     e := cast(^events.Mouse_Event)s.data
     if e.button != 0 do return
-    _from_signal(s)._pressed = true
+    n := _from_signal(s)
+    _show(n, n._hovered, true)
 }
 
 @(private="file")
 _on_up :: proc(s: ^events.Event_Signal) {
-    _from_signal(s)._pressed = false
+    n := _from_signal(s)
+    _show(n, n._hovered, false)
 }
 
 @(private="file")
@@ -122,7 +156,13 @@ _draw :: proc(n: ^Button) {
     } else if n._hovered {
         bg = st.hover
     }
-    painter.rect(painter.get(), n.rect, bg, st.radius)
+    radius := node.Resolve_Corner_Radius(n)
+    p := painter.get()
+    painter.decoration_under(p, n.rect, radius, st.decoration)
+    painter.rect(p, n.rect, bg, radius)
+    painter.decoration_fill(p, n.rect, radius, st.decoration)
+    painter.border_sides(p, n.rect, st.border_color, st.border_width, radius)
+    painter.decoration_over(p, n.rect, radius, st.decoration)
 }
 
 @(private="file")

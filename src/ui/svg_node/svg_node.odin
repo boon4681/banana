@@ -21,6 +21,7 @@ SVG_Node :: struct {
     using node: Node,
     style:   proc(self: ^SVG_Node) -> ^SVG_Style,
     set_svg: proc(self: ^SVG_Node, source: string) -> svg.Error,
+    set_source: proc(self: ^SVG_Node, source: string) -> svg.Error,
     get_svg: proc(self: ^SVG_Node) -> string,
 }
 
@@ -36,6 +37,7 @@ New :: proc(source: string = "", style: SVG_Style = {}, key: Maybe(string) = nil
     node.Init(n, key)
     n.style = _get_style
     n.set_svg = _set_svg
+    n.set_source = _set_svg
     n.get_svg = _get_svg
     n.data = new(_SVG_Data)
     st := style
@@ -57,6 +59,7 @@ _data :: proc(n:^SVG_Node)-> ^_SVG_Data {
 
 @(private="file")
 _get_style :: proc(n:^SVG_Node)->^SVG_Style {
+    n->damage()
     return auto_cast(n._internal_style)
 }
 

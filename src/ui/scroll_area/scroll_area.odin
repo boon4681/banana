@@ -4,6 +4,7 @@ import "src:core/common"
 import "src:core/events"
 import "src:core/input"
 import "src:core/node"
+import "src:core/scroll"
 import "src:ui/box"
 import "src:ui/svg_node"
 import "core:time"
@@ -13,7 +14,6 @@ BANANA_COMPONENT_TYPE :: ^Scroll_Area
 
 @(private="file") ARROW_REPEAT_DELAY :: 0.25
 @(private="file") ARROW_REPEAT_RATE :: 0.05
-@(private="file") ARROW_STEP :: 40.0
 
 Scroll_Bar_Mode :: enum {
     Auto,
@@ -40,6 +40,8 @@ Scroll_Area_Style :: struct {
     horizontal:     Scroll_Bar_Mode,
 }
 
+// Offset and range live on the port: `scroll.to`, `scroll.by`, `scroll.offset` and
+// `scroll.range` take the area.
 Scroll_Area :: struct {
     using base: Node,
     style: proc(self: ^Scroll_Area) -> ^Scroll_Area_Style,
@@ -47,11 +49,8 @@ Scroll_Area :: struct {
     // Children added to a Scroll_Area are placed in this content node.
     content: ^node.Node,
 
-    scroll_x, scroll_y:         f32,
-    max_scroll_x, max_scroll_y: f32,
-
-    scroll_to: proc(self: ^Scroll_Area, x, y: f32),
-    scroll_by: proc(self: ^Scroll_Area, dx, dy: f32),
+    _port:     node.Scroll_Port, // on `content`, whose children scroll
+    _own_port: node.Scroll_Port, // on the area: it scrolls nothing itself
 
     _v_track, _v_thumb: ^box.Box,
     _h_track, _h_thumb: ^box.Box,
@@ -60,8 +59,7 @@ Scroll_Area :: struct {
     _arrow_left:        _Arrow,
     _arrow_right:       _Arrow,
     _drag_axis:         _Axis,
-    _drag_pointer:      f32,
-    _drag_scroll:       f32,
+    _drag_grab:         f32,
     _track_axis:        _Axis,
     _track_direction:   f32,
     _track_pointer:     [2]f32,
@@ -111,9 +109,16 @@ New :: proc(style: Scroll_Area_Style = {}, key: Maybe(string) = nil) -> ^Scroll_
     n.style = _get_style
     node.Set_Style(auto_cast(n), new_clone(st))
     node.Init_Style(auto_cast(n))
+    n.scroll = &n._own_port
+    n._own_port.update = _update
     n->style()->set_overflow(.Auto)
 
     n.content = node.New("content")
+    n.content.scroll = &n._port
+    n._own_port.inner = n.content
+    n._port.move = scroll.move_clamped
+    n.content->on(events.KEY_DOWN_EVENT, scroll.on_key)
+    n.content->on(events.FOCUS_EVENT, scroll.on_focus)
     n.content->style()->
         set_flex_direction(.Column)->
         set_align_items(.Stretch)->
@@ -139,12 +144,10 @@ New :: proc(style: Scroll_Area_Style = {}, key: Maybe(string) = nil) -> ^Scroll_
     n->add(n.content, n._v_track, n._h_track)
     n.add = _add
 
-    n.scroll_to = _scroll_to
-    n.scroll_by = _scroll_by
     n.process = transmute(proc(self: ^Node))_process
     n.on_free = transmute(proc(self: ^Node))_free
 
-    n->on("wheel", _on_wheel)
+    n->on(events.MOUSE_WHEEL_EVENT, scroll.on_wheel)
     n._v_track->on(events.MOUSE_DOWN_EVENT, _on_track_down)
     n._h_track->on(events.MOUSE_DOWN_EVENT, _on_track_down)
     n._v_thumb->on(events.MOUSE_DOWN_EVENT, _on_thumb_down)
@@ -174,6 +177,7 @@ _make_arrow :: proc(icon: string, axis: _Axis, dir: f32, bg, tint: Color) -> _Ar
 
 @(private="file")
 _get_style :: proc(n: ^Scroll_Area) -> ^Scroll_Area_Style {
+    n->damage()
     return auto_cast(n._internal_style)
 }
 
@@ -185,34 +189,46 @@ _add :: proc(self: ^Node, kids: ..^Node) -> ^Node {
 }
 
 @(private="file")
-_clamp_offsets :: proc(n: ^Scroll_Area) {
-    n.scroll_x = clamp(n.scroll_x, 0, n.max_scroll_x)
-    n.scroll_y = clamp(n.scroll_y, 0, n.max_scroll_y)
+_scroll_along :: proc(n: ^Scroll_Area, axis: _Axis, delta: f32) {
+    if axis == .Vertical {
+        scroll.by(n, 0, delta)
+    } else {
+        scroll.by(n, delta, 0)
+    }
 }
 
 @(private="file")
-_scroll_to :: proc(n: ^Scroll_Area, x, y: f32) {
-    n.scroll_x = x
-    n.scroll_y = y
-    _clamp_offsets(n)
+_set_along :: proc(n: ^Scroll_Area, axis: _Axis, value: f32) {
+    if axis == .Vertical {
+        scroll.to(n, n._port.offset.x, value)
+    } else {
+        scroll.to(n, value, n._port.offset.y)
+    }
 }
 
 @(private="file")
-_scroll_by :: proc(n: ^Scroll_Area, dx, dy: f32) {
-    _scroll_to(n, n.scroll_x + dx, n.scroll_y + dy)
+_track_length :: proc(n: ^Scroll_Area, axis: _Axis) -> f32 {
+    return n._v_track.rect.h if axis == .Vertical else n._h_track.rect.w
 }
 
 @(private="file")
-_content_extent :: proc(n: ^Node, right, bottom: ^f32) {
-    right^ = max(right^, n.rect.x + n.rect.w)
-    bottom^ = max(bottom^, n.rect.y + n.rect.h)
-    for c in n.children do _content_extent(c, right, bottom)
+_thumb_length :: proc(n: ^Scroll_Area, axis: _Axis) -> f32 {
+    return n._v_thumb.rect.h if axis == .Vertical else n._h_thumb.rect.w
+}
+
+// The stretch of a track its thumb moves in: what the arrow buttons leave.
+@(private="file")
+_lane :: proc(n: ^Scroll_Area, axis: _Axis) -> (start, length: f32) {
+    full := _track_length(n, axis)
+    arrow := min((cast(^Scroll_Area_Style)n._internal_style).scrollbar_size, full * 0.5)
+    start = n._v_track.rect.y if axis == .Vertical else n._h_track.rect.x
+    return start + arrow, max(full - arrow * 2, 0)
 }
 
 @(private="file")
 _is_visible :: proc(mode: Scroll_Bar_Mode, maximum: f32) -> bool {
     switch mode {
-    case .Auto:   return maximum > 0.5
+    case .Auto:   return maximum > 0
     case .Always: return true
     case .Hidden: return false
     }
@@ -221,11 +237,14 @@ _is_visible :: proc(mode: Scroll_Bar_Mode, maximum: f32) -> bool {
 
 @(private="file")
 _set_overlay_rects :: proc(n: ^Scroll_Area, viewport: common.Rect) {
-    st := n->style()
+    // Runs every tick: reading through style() would paint every frame.
+    st := cast(^Scroll_Area_Style)n._internal_style
+    port := &n._port
     size := st.scrollbar_size
     inset := min(st.thumb_inset, size * 0.5)
-    show_v := _is_visible(st.vertical, n.max_scroll_y)
-    show_h := _is_visible(st.horizontal, n.max_scroll_x)
+    thick := max(size - inset * 2, 0)
+    show_v := _is_visible(st.vertical, port.range.y)
+    show_h := _is_visible(st.horizontal, port.range.x)
 
     n._v_track.rect = {viewport.x + viewport.w - size, viewport.y, size, viewport.h - (show_h ? size : 0)}
     n._h_track.rect = {viewport.x, viewport.y + viewport.h - size, viewport.w - (show_v ? size : 0), size}
@@ -242,29 +261,13 @@ _set_overlay_rects :: proc(n: ^Scroll_Area, viewport: common.Rect) {
     _center_glyph(&n._arrow_left, size)
     _center_glyph(&n._arrow_right, size)
 
-    v_off := arrow
-    v_len := max(n._v_track.rect.h - arrow * 2, 0)
-    v_thumb := v_len
-    if n.max_scroll_y > 0 {
-        content_h := viewport.h + n.max_scroll_y
-        v_thumb = clamp(v_len * viewport.h / content_h, min(st.min_thumb_size, v_len), v_len)
-    }
-    v_travel := max(v_len - v_thumb, 0)
-    v_pos: f32 = 0
-    if n.max_scroll_y > 0 do v_pos = v_travel * n.scroll_y / n.max_scroll_y
-    n._v_thumb.rect = {n._v_track.rect.x + inset, n._v_track.rect.y + v_off + v_pos, max(size - inset * 2, 0), v_thumb}
+    v_start, v_lane := _lane(n, .Vertical)
+    v_thumb, v_at := scroll.thumb_span(v_lane, viewport.h, port.range.y, port.offset.y, st.min_thumb_size)
+    n._v_thumb.rect = {n._v_track.rect.x + inset, v_start + v_at, thick, v_thumb}
 
-    h_off := h_arrow
-    h_len := max(n._h_track.rect.w - h_arrow * 2, 0)
-    h_thumb := h_len
-    if n.max_scroll_x > 0 {
-        content_w := viewport.w + n.max_scroll_x
-        h_thumb = clamp(h_len * viewport.w / content_w, min(st.min_thumb_size, h_len), h_len)
-    }
-    h_travel := max(h_len - h_thumb, 0)
-    h_pos: f32 = 0
-    if n.max_scroll_x > 0 do h_pos = h_travel * n.scroll_x / n.max_scroll_x
-    n._h_thumb.rect = {n._h_track.rect.x + h_off + h_pos, n._h_track.rect.y + inset, h_thumb, max(size - inset * 2, 0)}
+    h_start, h_lane := _lane(n, .Horizontal)
+    h_thumb, h_at := scroll.thumb_span(h_lane, viewport.w, port.range.x, port.offset.x, st.min_thumb_size)
+    n._h_thumb.rect = {h_start + h_at, n._h_track.rect.y + inset, h_thumb, thick}
 
     // Hidden nodes get an empty hit box as well as an empty draw box.
     if !show_v {
@@ -293,36 +296,34 @@ _center_glyph :: proc(a: ^_Arrow, size: f32) {
     a.glyph.rect = {b.x + (b.w - glyph) * 0.5, b.y + (b.h - glyph) * 0.5, glyph, glyph}
 }
 
+// Layout caches every rect again each frame and after a scroll, which drops where the bars were put.
 @(private="file")
-_process :: proc(n: ^Scroll_Area) {
-    viewport := n.rect
-    border := n->get_rect(.Border)
-    padding := n->get_rect(.Padding)
-    viewport.x += padding.x - border.x
-    viewport.y += padding.y - border.y
-    viewport.w = padding.w
-    viewport.h = padding.h
+_update :: proc(self: ^Node, laid_out: bool) {
+    n := cast(^Scroll_Area)self
+    port := &n._port
+    viewport := scroll.padding_box(n)
+    if laid_out {
+        inner := n.content.rect
+        end := scroll.content_end(n.content, {inner.x + inner.w, inner.y + inner.h}, port.applied)
+        scroll.set_range(port, {end.x - (viewport.x + viewport.w), end.y - (viewport.y + viewport.h)})
+    }
+    _set_overlay_rects(n, viewport)
 
-    right := n.content.rect.x + n.content.rect.w
-    bottom := n.content.rect.y + n.content.rect.h
-    _content_extent(n.content, &right, &bottom)
-    n.max_scroll_x = max(right - (viewport.x + viewport.w), 0)
-    n.max_scroll_y = max(bottom - (viewport.y + viewport.h), 0)
-    _clamp_offsets(n)
-    _set_overlay_rects(n, viewport)
-    _advance_track_scroll(n)
-    _advance_arrow_scroll(n)
-    n.content.transform.translate = {-n.scroll_x, -n.scroll_y}
-    _set_overlay_rects(n, viewport)
+    st := cast(^Scroll_Area_Style)n._internal_style
+    shown := viewport
+    if _is_visible(st.vertical, port.range.y) do shown.w -= st.scrollbar_size
+    if _is_visible(st.horizontal, port.range.x) do shown.h -= st.scrollbar_size
+    port.viewport = shown
+    n._own_port.viewport = viewport
 }
 
 @(private="file")
-_arrow_step :: proc(n: ^Scroll_Area, axis: _Axis, dir: f32) {
-    if axis == .Vertical {
-        n->scroll_by(0, dir * ARROW_STEP)
-    } else {
-        n->scroll_by(dir * ARROW_STEP, 0)
-    }
+_process :: proc(n: ^Scroll_Area) {
+    if n._track_axis == .None && n._arrow_axis == .None do return
+    // Runs before `_update`: the held repeat reads where the bars are.
+    _set_overlay_rects(n, scroll.padding_box(n))
+    _advance_track_scroll(n)
+    _advance_arrow_scroll(n)
 }
 
 @(private="file")
@@ -336,13 +337,12 @@ _advance_arrow_scroll :: proc(n: ^Scroll_Area) {
         return
     }
     n._arrow_last = now
-    _arrow_step(n, n._arrow_axis, n._arrow_direction)
+    _scroll_along(n, n._arrow_axis, n._arrow_direction * scroll.LINE_STEP)
 }
 
 @(private="file")
 _page_step :: proc(n: ^Scroll_Area, axis: _Axis) -> f32 {
-    length := n._v_track.rect.h if axis == .Vertical else n._h_track.rect.w
-    return max(length * 0.875, length - 40, 1)
+    return max(scroll.page_step(_track_length(n, axis)), 1)
 }
 
 @(private="file")
@@ -372,32 +372,12 @@ _advance_track_scroll :: proc(n: ^Scroll_Area) {
     }
     dt := time.duration_seconds(time.tick_diff(n._track_last, now))
     n._track_last = now
-    delta := n._track_direction * _page_step(n, n._track_axis) * 20 * f32(min(dt, 0.05))
-    if n._track_axis == .Vertical {
-        n->scroll_by(0, delta)
-    } else {
-        n->scroll_by(delta, 0)
-    }
+    _scroll_along(n, n._track_axis, n._track_direction * _page_step(n, n._track_axis) * 20 * f32(min(dt, 0.05)))
 }
 
 @(private="file")
 _area_from_signal :: proc(s: ^events.Event_Signal) -> ^Scroll_Area {
     return auto_cast(s.current_target)
-}
-
-@(private="file")
-_on_wheel :: proc(s: ^events.Event_Signal) {
-    n := _area_from_signal(s)
-    e := cast(^events.Wheel_Event)s.data
-    old_x, old_y := n.scroll_x, n.scroll_y
-    dx, dy := -e.delta_x, -e.delta_y
-    dx = clamp(dx, -n.rect.w, n.rect.w)
-    dy = clamp(dy, -n.rect.h, n.rect.h)
-    n->scroll_by(dx, dy)
-    if n.scroll_x != old_x || n.scroll_y != old_y {
-        events.prevent_default(s)
-        events.stop_propagation(s)
-    }
 }
 
 @(private="file")
@@ -421,16 +401,25 @@ _on_thumb_down :: proc(s: ^events.Event_Signal) {
     if n == nil do return
     e := cast(^events.Mouse_Event)s.data
     n._drag_axis = axis
-    n._drag_pointer = e.y if axis == .Vertical else e.x
-    n._drag_scroll = n.scroll_y if axis == .Vertical else n.scroll_x
     if axis == .Vertical {
+        n._drag_grab = e.y - n._v_thumb.rect.y
         n._v_thumb->style().background = n->style().thumb_pressed
     } else {
+        n._drag_grab = e.x - n._h_thumb.rect.x
         n._h_thumb->style().background = n->style().thumb_pressed
     }
     input.capture_pointer(auto_cast(n))
     events.stop_propagation(s)
     events.prevent_default(s)
+}
+
+@(private="file")
+_drag_to :: proc(n: ^Scroll_Area, axis: _Axis, pointer: f32) {
+    start, length := _lane(n, axis)
+    travel := length - _thumb_length(n, axis)
+    if travel <= 0 do return
+    range := n._port.range.y if axis == .Vertical else n._port.range.x
+    _set_along(n, axis, scroll.offset_at(pointer - n._drag_grab - start, travel, range))
 }
 
 @(private="file")
@@ -440,39 +429,20 @@ _on_track_down :: proc(s: ^events.Event_Signal) {
     if n == nil do return
     e := cast(^events.Mouse_Event)s.data
     pointer := e.y if axis == .Vertical else e.x
-    thumb_start := n._v_thumb.rect.y if axis == .Vertical else n._h_thumb.rect.x
-    thumb_length := n._v_thumb.rect.h if axis == .Vertical else n._h_thumb.rect.w
-    // Inset the thumb range past arrow buttons.
-    arrow := min(n->style().scrollbar_size, (n._v_track.rect.h if axis == .Vertical else n._h_track.rect.w) * 0.5)
-    track_start := (n._v_track.rect.y if axis == .Vertical else n._h_track.rect.x) + arrow
-    track_length := max((n._v_track.rect.h if axis == .Vertical else n._h_track.rect.w) - arrow * 2, 0)
-    maximum := n.max_scroll_y if axis == .Vertical else n.max_scroll_x
 
     if .Shift in e.mods {
-        travel := max(track_length - thumb_length, 0)
-        offset := clamp(pointer - track_start - thumb_length * 0.5, 0, travel)
-        value: f32 = 0
-        if travel > 0 do value = offset * maximum / travel
-        if axis == .Vertical {
-            n->scroll_to(n.scroll_x, value)
-        } else {
-            n->scroll_to(value, n.scroll_y)
-        }
         n._drag_axis = axis
-        n._drag_pointer = pointer
-        n._drag_scroll = value
+        n._drag_grab = _thumb_length(n, axis) * 0.5
+        _drag_to(n, axis, pointer)
         input.capture_pointer(auto_cast(n))
         events.stop_propagation(s)
         events.prevent_default(s)
         return
     }
 
+    thumb_start := n._v_thumb.rect.y if axis == .Vertical else n._h_thumb.rect.x
     direction: f32 = -1 if pointer < thumb_start else 1
-    if axis == .Vertical {
-        n->scroll_by(0, direction * _page_step(n, axis))
-    } else {
-        n->scroll_by(direction * _page_step(n, axis), 0)
-    }
+    _scroll_along(n, axis, direction * _page_step(n, axis))
     n._track_axis = axis
     n._track_direction = direction
     n._track_pointer = {e.x, e.y}
@@ -493,13 +463,7 @@ _on_pointer_move :: proc(s: ^events.Event_Signal) {
         return
     }
     if n._drag_axis == .None do return
-    if n._drag_axis == .Vertical {
-        travel := n._v_track.rect.h - n._v_thumb.rect.h
-        if travel > 0 do n->scroll_to(n.scroll_x, n._drag_scroll + (e.y - n._drag_pointer) * n.max_scroll_y / travel)
-    } else {
-        travel := n._h_track.rect.w - n._h_thumb.rect.w
-        if travel > 0 do n->scroll_to(n._drag_scroll + (e.x - n._drag_pointer) * n.max_scroll_x / travel, n.scroll_y)
-    }
+    _drag_to(n, n._drag_axis, e.y if n._drag_axis == .Vertical else e.x)
     events.prevent_default(s)
 }
 
@@ -548,7 +512,7 @@ _on_arrow_down :: proc(s: ^events.Event_Signal) {
     e := cast(^events.Mouse_Event)s.data
     if e.button != 0 do return
 
-    _arrow_step(n, a.axis, a.dir)
+    _scroll_along(n, a.axis, a.dir * scroll.LINE_STEP)
     n._arrow_axis = a.axis
     n._arrow_direction = a.dir
     n._arrow_started = time.tick_now()

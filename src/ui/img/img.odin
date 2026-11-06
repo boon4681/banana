@@ -134,6 +134,7 @@ _data :: proc(n: ^Img_Node) -> ^_Img_Data {
 
 @(private="file")
 _get_style :: proc(n: ^Img_Node) -> ^Img_Style {
+    n->damage()
     return auto_cast(n._internal_style)
 }
 
@@ -302,6 +303,9 @@ _awake :: proc(n: ^Img_Node) {
     d.err = _load(n, encoded)
 }
 
+// Set source image for this image component
+set_src :: _set_src
+
 @(private="file")
 _set_src :: proc{_set_src_string, _set_src_bytes}
 
@@ -324,6 +328,7 @@ _set_src_string :: proc(n: ^Img_Node, src: string) {
     }
     d.src = strings.clone(src)
     d.pending = true
+    _awake(n)
     n->dirty()
 }
 
@@ -368,6 +373,8 @@ _process :: proc(n: ^Img_Node) {
     }
     d.last = now
 
+    shown := d.frame
+    defer if d.frame != shown do n->damage()
     if d.anim != nil {
         _step_anim(d.anim, &d.frame, &d.clock)
         platform.gif_prefetch(d.anim, d.frame, 1)
