@@ -96,24 +96,25 @@ derived :: proc(fn: proc(ctx: rawptr) -> $T, ctx: rawptr = nil) -> ^Derived(T) {
     return d
 }
 
-// Runs on the next flush, then whenever what it read changes.
+// first run on the next flush, then again whenever what it read change
 effect :: proc(fn: proc(e: ^Effect), ctx: rawptr = nil) -> ^Effect {
     return _effect(.User_Effect, fn, ctx)
 }
 
-// Runs before user effects.
+// same as effect but run before user effects
 pre_effect :: proc(fn: proc(e: ^Effect), ctx: rawptr = nil) -> ^Effect {
     return _effect(.Pre_Effect, fn, ctx)
 }
 
-// A context-backed effect with explicit dependencies.
+// effect with an explicit dependency list instead of tracking reads
 Effect_With_Deps :: struct {
     deps: []Node_Id,
     fn:   proc(r: rawptr),
     ctx:  rawptr,
 }
 
-// Re-runs when any dependency changes.
+// rerun when any of deps change
+// ewd must outlive the effect
 effect_with_deps :: proc(ewd: ^Effect_With_Deps) -> ^Effect {
     return effect(proc(e: ^Effect) {
         wc := cast(^Effect_With_Deps)e.ctx
@@ -142,7 +143,7 @@ _effect :: proc(kind: Kind, fn: proc(e: ^Effect), ctx: rawptr) -> ^Effect {
     return e
 }
 
-// Runs before the next effect pass and again when the effect is destroyed.
+// fn run before the next rerun, and again when the effect is destroyed
 on_cleanup :: proc(e: ^Effect, fn: proc(e: ^Effect)) {
     if e == nil do return
     e._cleanup = fn
@@ -161,7 +162,7 @@ get :: proc {
     derived_get,
 }
 
-// Reads the current value without subscribing the running reaction to it.
+// read the value without subscribing whatever is running now
 peek :: proc {
     source_peek,
     derived_peek,
@@ -190,6 +191,18 @@ set :: proc(s: ^Source($T), value: T) {
     s.value = _own(value, s.allocator)
     _retire(old, s.allocator)
     _bump(s.id)
+}
+
+// use after mutating the value in place, set would see the same value and do nothing
+notify :: proc(s: ^Source($T)) {
+    if s != nil do _bump(s.id)
+}
+
+// listen to source of signal before its got freed.
+// limit to one per source, a second call replace it.
+on_destroy :: proc(s: ^Source($T), fn: proc(source: rawptr)) {
+    if s == nil do return
+    if n := _node(s.id); n != nil do n.teardown = fn
 }
 
 update :: proc(s: ^Source($T), fn: proc(old: T) -> T) {
@@ -236,7 +249,7 @@ resume :: proc(e: ^Effect) {
     if n.status != .Clean || n.pending_child do _schedule(e.id)
 }
 
-// Runs `fn` without recording anything it reads as a dependency.
+// run fn without subscribing to anything it read
 untrack :: proc(fn: proc(ctx: rawptr), ctx: rawptr = nil) {
     if fn == nil do return
     prev := _untracked
