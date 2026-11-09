@@ -198,6 +198,16 @@ _toggle_maximize :: proc() {
 }
 
 @(private = "file")
+_set_visible :: proc(visible: bool) {
+    if !visible do fmt.println("warning: hide is unsupported on this platform and has no effect")
+}
+
+@(private = "file")
+_is_visible :: proc() -> bool {
+    return true
+}
+
+@(private = "file")
 _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
     s := cast(^Web_State)(state)
     _active = s
@@ -531,6 +541,8 @@ PLATFORM_WEB :: Platform_Interface {
     is_maximized        = _is_maximized,
     is_minimized        = _is_minimized,
     toggle_maximize     = _toggle_maximize,
+    set_visible         = _set_visible,
+    is_visible          = _is_visible,
     set_window_user_ptr = _set_window_user_ptr,
     clipboard_get       = _clipboard_get,
     clipboard_set       = _clipboard_set,

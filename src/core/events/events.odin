@@ -23,6 +23,9 @@ WINDOW_BLUR_EVENT          :: "window:blur"
 WINDOW_REFRESH_EVENT       :: "window:refresh"
 WINDOW_CLOSE_REQUEST_EVENT :: "window:close-request"
 
+TRAY_CLICK_EVENT           :: "tray:click"
+TRAY_MENU_EVENT            :: "tray:menu"
+
 // Backends translate their native codes to this; see platform/p_glfw.odin
 Key  :: binding.Key
 Mod  :: binding.Mod
@@ -46,6 +49,12 @@ Mouse_Event :: struct {
     x, y:   f32,
     button: int, // 0 = left, 1 = right, 2 = middle
     mods:   Mods,
+}
+
+// "tray:click", "tray:menu"
+Tray_Event :: struct {
+    button: int, // 0 = left, 1 = right
+    item:   int, // id of the chosen Tray_Item
 }
 
 // "wheel"

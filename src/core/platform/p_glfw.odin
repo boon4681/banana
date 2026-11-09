@@ -267,6 +267,27 @@ _toggle_maximize :: proc() {
 }
 
 @(private = "file")
+_set_visible :: proc(visible: bool) {
+    if _active == nil || _active.handle == nil do return
+    // first paint would show it again
+    _active.visible = true
+    if !visible {
+        glfw.HideWindow(_active.handle)
+        return
+    }
+    glfw.ShowWindow(_active.handle)
+    if glfw.GetWindowAttrib(_active.handle, glfw.ICONIFIED) != 0 do glfw.RestoreWindow(_active.handle)
+    glfw.FocusWindow(_active.handle)
+}
+
+@(private = "file")
+_is_visible :: proc() -> bool {
+    if _active == nil || _active.handle == nil do return false
+    if !_active.visible do return true
+    return glfw.GetWindowAttrib(_active.handle, glfw.VISIBLE) != 0
+}
+
+@(private = "file")
 _set_window_user_ptr :: proc(state: rawptr, ptr: rawptr) {
     _callback_context = context
     _active = cast(^GLFW_State)(state)
@@ -571,6 +592,8 @@ PLATFORM_GLFW :: Platform_Interface{
     is_maximized        = _is_maximized,
     is_minimized        = _is_minimized,
     toggle_maximize     = _toggle_maximize,
+    set_visible         = _set_visible,
+    is_visible          = _is_visible,
     set_window_user_ptr = _set_window_user_ptr,
     clipboard_get       = _clipboard_get,
     clipboard_set       = _clipboard_set,

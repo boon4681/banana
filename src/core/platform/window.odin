@@ -147,6 +147,9 @@ handle :: proc(w: ^Window, ev: EVENT) {
     case FOCUS_CHANGED:
         event_type := events.WINDOW_FOCUS_EVENT if e.focused else events.WINDOW_BLUR_EVENT
         _emit_window(w, event_type)
+    case TRAY:
+        tray_event := e.event
+        _emit_window(w, e.type, &tray_event)
     }
 }
 
@@ -202,7 +205,7 @@ _pace :: proc(w: ^Window) {
     // A shown window that just painted already waited for the display in its swap. A timed
     // wait on top of that is rounded up to the system timer period, which drops display
     // frames and makes an animation stutter. A minimized window's swap waits for nothing.
-    minimized := PLATFORM.is_minimized()
+    minimized := PLATFORM.is_minimized() || !PLATFORM.is_visible()
     if !minimized && time.tick_diff(w.tick_at, s.last_paint) >= 0 {
         PLATFORM.poll_events()
         w.tick_at = time.tick_now()
@@ -386,7 +389,7 @@ minimize :: proc(w: ^Window) {
     if w == nil do return
     PLATFORM.set_active_state(w.platform_state)
     begin_self_hide(w)
-    PLATFORM.minimize()
+    if !SHELL.minimize(w) do PLATFORM.minimize()
     end_self_hide(w)
 }
 
@@ -402,9 +405,31 @@ toggle_maximize :: proc(w: ^Window) {
     PLATFORM.toggle_maximize()
 }
 
+hide :: proc(w: ^Window) {
+    if w == nil do return
+    PLATFORM.set_active_state(w.platform_state)
+    begin_self_hide(w)
+    PLATFORM.set_visible(false)
+    end_self_hide(w)
+}
+
+show :: proc(w: ^Window) {
+    if w == nil do return
+    PLATFORM.set_active_state(w.platform_state)
+    PLATFORM.set_visible(true)
+    request_frame(w)
+}
+
+is_visible :: proc(w: ^Window) -> bool {
+    if w == nil do return false
+    PLATFORM.set_active_state(w.platform_state)
+    return PLATFORM.is_visible()
+}
+
 free :: proc(w: ^Window) {
     if w == nil do return
     prev := scoped_current(w)
+    SHELL.forget_window(w)
     disable_native_frame(w)
     if w.root != nil do w.root->free()
     painter.shutdown(w.painter)

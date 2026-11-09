@@ -62,6 +62,8 @@ Platform_Interface :: struct #all_or_none {
     is_maximized:        proc() -> bool,
     is_minimized:        proc() -> bool,
     toggle_maximize:     proc(), // Toggles between maximized and restored.
+    set_visible:         proc(visible: bool),
+    is_visible:          proc() -> bool,
     set_window_user_ptr: proc(state: rawptr, ptr: rawptr),
     clipboard_get:       proc(allocator: runtime.Allocator) -> string,
     clipboard_set:       proc(text: string),
@@ -75,6 +77,7 @@ MOUSE_WHEEL   :: struct { dx, dy, x, y: f32 }
 KEY           :: struct { code: events.Key, key: rune, scancode, action: int, mods: events.Mods }
 TYPED         :: struct { codepoint: rune }
 FOCUS_CHANGED :: struct { focused: bool }
+TRAY          :: struct { type: string, event: events.Tray_Event }
 
 EVENT :: union {
 	RESIZED,
@@ -85,4 +88,5 @@ EVENT :: union {
 	KEY,
 	TYPED,
 	FOCUS_CHANGED,
+	TRAY,
 }
