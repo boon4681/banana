@@ -99,6 +99,11 @@ vec3 srgb_to_linear(vec3 c) {
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }
 
+float text_coverage(float a, vec3 rgb) {
+    float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    return mix(1.0 - pow(1.0 - a, 1.8), pow(a, 1.8), luma);
+}
+
 void main() {
     ivec2 cell = ivec2(floor(clamp(v_uv, vec2(0.0), vec2(15.999))));
     int cell_index = int(v_robin.x) + cell.y * 16 + cell.x;
@@ -126,5 +131,5 @@ void main() {
     else if (winding == 1.0)  alpha = (proximity > 0.0) ? 1.0 : min(0.5 - proximity, 1.0);
     else if (winding == -1.0) alpha = (proximity < 0.0) ? 1.0 : min(0.5 + proximity, 1.0);
     else                      alpha = 1.0;
-    frag = vec4(srgb_to_linear(v_color.rgb), v_color.a * alpha * clip_coverage());
+    frag = vec4(srgb_to_linear(v_color.rgb), v_color.a * text_coverage(alpha, v_color.rgb) * clip_coverage());
 }

@@ -123,6 +123,7 @@ robin_build_raster :: proc(
     width:  int = 16,
     height: int = 16,
     allocator := context.allocator,
+    margin: [2]f32 = {},
 ) -> Robin_Raster {
     r := Robin_Raster{
         min       = bounds_min,
@@ -213,6 +214,8 @@ robin_build_raster :: proc(
 
     for curve in 0 ..< curve_count {
         b := bounds[curve]
+        b.mn -= margin
+        b.mx += margin
         x0 := clamp(int((b.mn.x - bounds_min.x) * inv_cell.x), 0, width - 1)
         x1 := clamp(int((b.mx.x - bounds_min.x) * inv_cell.x), 0, width - 1)
         y0 := clamp(int((b.mn.y - bounds_min.y) * inv_cell.y), 0, height - 1)

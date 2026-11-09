@@ -8,9 +8,7 @@ ROBIN_GPU_UNSAFE   :: #config(BANANA_TEXT_ROBIN_GPU_UNSAFE, true) // ENABLE by d
 // path needs EXT_color_buffer_float for its RG32F cell texture.
 ROBIN_TEXT_ACTIVE :: ROBIN_TEXT_ENABLED && ROBIN_GPU_UNSAFE
 ROBIN_GRID        :: 16
-// Must stay 0: no sampling border is needed, and
-// any padding overlaps neighbouring glyph quads.
-ROBIN_PADDING_EM :: 0.0
+ROBIN_PADDING_EM :: 0.1
 
 Robin_Glyph :: struct {
     // Padded glyph bounds in em: left, bottom, right, top.
@@ -72,6 +70,7 @@ robin_glyph :: proc(face: ^Face, gid: u32, embold: f32 = 0) -> (Robin_Glyph, boo
     raster := robin_build_raster(
         transformed, {0, 0}, {ROBIN_GRID, ROBIN_GRID},
         ROBIN_GRID, ROBIN_GRID, context.temp_allocator,
+        ROBIN_PADDING_EM / span * f32(ROBIN_GRID),
     )
 
     cell_count := ROBIN_GRID * ROBIN_GRID

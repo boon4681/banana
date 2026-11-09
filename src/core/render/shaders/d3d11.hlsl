@@ -290,6 +290,11 @@ float3 curve_crossing(float2 p1, float2 p2, float2 p3, float line_y, float2 q) {
     return float3(change, prox_x, prox_y);
 }
 
+float text_coverage(float a, float3 rgb) {
+    float luma = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+    return lerp(1.0 - pow(1.0 - a, 1.8), pow(a, 1.8), luma);
+}
+
 float4 ps_robin(V2P i) : SV_Target {
     int2 cell = int2(floor(clamp(i.uv, 0.0, 15.999)));
     int cell_index = int(i.extra.x) + cell.y * 16 + cell.x;
@@ -315,7 +320,7 @@ float4 ps_robin(V2P i) : SV_Target {
     else if (winding == 1.0)  alpha = (proximity > 0.0) ? 1.0 : min(0.5 - proximity, 1.0);
     else if (winding == -1.0) alpha = (proximity < 0.0) ? 1.0 : min(0.5 + proximity, 1.0);
     else                      alpha = 1.0;
-    return float4(srgb_to_linear(i.color.rgb), i.color.a * alpha * clip_coverage(i.pos.xy));
+    return float4(srgb_to_linear(i.color.rgb), i.color.a * text_coverage(alpha, i.color.rgb) * clip_coverage(i.pos.xy));
 }
 
 float4 ps_msdf(V2P i) : SV_Target {
