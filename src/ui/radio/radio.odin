@@ -10,9 +10,6 @@ import "src:ui/shared/theme"
 BANANA_COMPONENT      :: true
 BANANA_COMPONENT_TYPE :: ^Radio
 
-Node  :: node.BaseNode
-Color :: common.Color
-
 SIZE :: f32(16)
 GAP  :: f32(8)
 

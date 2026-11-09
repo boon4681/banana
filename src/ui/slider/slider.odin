@@ -12,9 +12,6 @@ import "src:ui/shared/theme"
 BANANA_COMPONENT      :: true
 BANANA_COMPONENT_TYPE :: ^Slider
 
-Node  :: node.BaseNode
-Color :: common.Color
-
 TRACK :: f32(6)
 THUMB :: f32(16)
 

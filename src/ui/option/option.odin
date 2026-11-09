@@ -7,8 +7,6 @@ import "src:ui/text_node"
 BANANA_COMPONENT      :: true
 BANANA_COMPONENT_TYPE :: ^Option
 
-Node :: node.BaseNode
-
 Option :: struct {
     using node: Node,
     style: proc(self: ^Option) -> ^node.Style,

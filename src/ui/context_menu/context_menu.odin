@@ -8,8 +8,6 @@ import "src:ui/shared/popup"
 BANANA_COMPONENT      :: true
 BANANA_COMPONENT_TYPE :: ^Context_Menu
 
-Node :: node.BaseNode
-
 Context_Menu :: struct {
     using node: Node,
     style: proc(self: ^Context_Menu) -> ^node.Style,

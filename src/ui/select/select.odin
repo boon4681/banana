@@ -13,9 +13,6 @@ import "src:ui/text_node"
 BANANA_COMPONENT      :: true
 BANANA_COMPONENT_TYPE :: ^Select
 
-Node  :: node.BaseNode
-Color :: common.Color
-
 Select_Style :: struct {
     using base: node.Style,
 }
