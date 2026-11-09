@@ -1,0 +1,18 @@
+{
+    // Hodin is my custom odin lsp so for normal developer you can ignore this file.
+    "collections": [
+        {
+            "name": "src",
+            "path": "./src/"
+        },
+        {
+            "name": "generated",
+            "path": "./.banana/generated"
+        }
+    ],
+    "format": {
+        "align_consecutive_assignments": true,
+        "split_struct_fields": true
+    },
+    "checker": {}
+}
