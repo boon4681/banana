@@ -33,6 +33,13 @@ foreign banana_env {
 
     @(private="file")
     file_dialog_open :: proc(id: u32, folder: bool, multiple: bool, accept: string) ---
+
+    @(private="file")
+    color_scheme_dark :: proc() -> bool ---
+}
+
+prefers_dark :: proc() -> bool {
+    return color_scheme_dark()
 }
 
 load_asset :: proc(path: string, allocator := context.allocator) -> []byte {
