@@ -6,7 +6,7 @@ Banana is a framework that aim to make things easier for create high-level ui wi
 
 ### Built with banana
 
-<img  width="600px" src="https://raw.githubusercontent.com/boon4681/banana/refs/heads/main/resources/catch.webp" alt="demo"/>
+<img  width="600px" src="./resources/catch.webp" alt="demo"/>
 
 <img  width="300px" src="https://raw.githubusercontent.com/boon4681/banana/refs/heads/main/resources/preview.png" alt="demo"/>
 
