@@ -36,3 +36,6 @@
 [submodule ".tools/back"]
 	path = .tools/back
 	url = https://github.com/laytan/back.git
+[submodule "libc/libwebp"]
+	path = libc/libwebp
+	url = https://github.com/webmproject/libwebp.git

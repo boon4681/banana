@@ -704,11 +704,12 @@ _screen_srv :: proc() -> ^d3d11.IShaderResourceView {
 
 @(private = "file")
 _present :: proc() {
+    w, h := _state.swapchain_w, _state.swapchain_h
+    if w <= 0 || h <= 0 do return
     _ensure_screen()
     if _state.screen_target == INVALID_RENDER_TARGET do return
     _resolve_screen()
 
-    w, h := _state.swapchain_w, _state.swapchain_h
     if w != _state.buffer_w || h != _state.buffer_h {
         _state.ctx->OMSetRenderTargets(0, nil, nil)
         _release(&_state.back_rtv)
@@ -1055,6 +1056,7 @@ _read_pixels :: proc(target: Render_Target, allocator: runtime.Allocator) -> ([]
     w, h: int
     format: dxgi.FORMAT
     if target == INVALID_RENDER_TARGET {
+        if _state.swapchain_w <= 0 || _state.swapchain_h <= 0 do return nil, 0, 0
         _ensure_screen()
         if _state.screen_target == INVALID_RENDER_TARGET do return nil, 0, 0
         dirty := _state.screen_dirty
