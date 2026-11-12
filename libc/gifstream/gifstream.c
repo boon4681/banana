@@ -5,6 +5,7 @@
 #include <string.h>
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
 #define STBI_NO_STDIO
 #include "stb_image.h"
 
