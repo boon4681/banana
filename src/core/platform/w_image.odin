@@ -3,6 +3,7 @@ package platform
 import "base:runtime"
 import "core:c"
 import "src:core/render"
+import webp "src:webp"
 import stbi "vendor:stb/image"
 
 Image_Error :: enum {
@@ -20,11 +21,13 @@ Image_Frame :: struct {
     delay: f32, // seconds to hold this frame
 }
 
-// Decoder used by file loading, browser fetches, and embedded assets. STB always expands the result to RGBA8.
+// Decoder used by file loading, browser fetches, and embedded assets. The result is always RGBA8.
 load_image_from_bytes :: proc(w: ^Window, encoded: []u8) -> (image: ^render.Image, err: Image_Error) {
     if w == nil do return nil, .Decode_Failed
     if len(encoded) == 0 do return nil, .Empty_Input
     if len(encoded) > int(max(c.int)) do return nil, .Input_Too_Large
+
+    if _is_webp(encoded) do return _load_webp(w, encoded)
 
     x, y, source_channels: c.int
     decoded := stbi.load_from_memory(
@@ -46,6 +49,34 @@ load_image_from_bytes :: proc(w: ^Window, encoded: []u8) -> (image: ^render.Imag
     pixels, alloc_err := make([]u8, byte_count, w.allocator)
     if alloc_err != nil do return nil, .Allocation_Failed
     copy(pixels, decoded[:byte_count])
+
+    image = new(render.Image, w.allocator)
+    image^ = render.Image {
+        data   = pixels,
+        w      = u32(width),
+        h      = u32(height),
+        format = .RGBA8,
+    }
+    append(&w.images, image)
+    return image, .None
+}
+
+@(private="file")
+_load_webp :: proc(w: ^Window, encoded: []u8) -> (image: ^render.Image, err: Image_Error) {
+    x, y: c.int
+    if webp.decode(raw_data(encoded), c.int(len(encoded)), nil, 0, &x, &y) != 1 do return nil, .Decode_Failed
+
+    width, height := int(x), int(y)
+    if width <= 0 || height <= 0 do return nil, .Invalid_Dimensions
+    if width > max(int) / height / 4 do return nil, .Invalid_Dimensions
+
+    byte_count := width * height * 4
+    pixels, alloc_err := make([]u8, byte_count, w.allocator)
+    if alloc_err != nil do return nil, .Allocation_Failed
+    if webp.decode(raw_data(encoded), c.int(len(encoded)), raw_data(pixels), c.size_t(byte_count), &x, &y) != 1 {
+        delete(pixels, w.allocator)
+        return nil, .Decode_Failed
+    }
 
     image = new(render.Image, w.allocator)
     image^ = render.Image {

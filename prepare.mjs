@@ -14,6 +14,7 @@ const libs = [
     { build: "build-lunasvg.zig", dir: "lunasvg", name: "lunasvg", cpp: true },
     { build: "build-tracy.zig", dir: "tracy", name: "tracy", cpp: true, wasm: false, out: "./libc/.build/tracy" },
     { build: "build-gifstream.zig", dir: "patches/std/image", name: "gifstream", cpp: false, out: "./libc/.build/gifstream" },
+    { build: "build-webp.zig", dir: "webp", name: "webp", cpp: false, out: "./libc/.build/webp" },
 ]
 
 for (const lib of libs) {

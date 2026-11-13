@@ -4,18 +4,25 @@ import "base:runtime"
 import "core:c"
 import "src:core/render"
 import gif "src:patches/std/image"
+import webp "src:webp"
 
 // Number of decoded frames an Animation keeps resident.
 GIF_ANIMATION_RING :: 4
 
-// Bounded-memory animated image.
+Anim_Codec :: enum {
+    GIF,
+    WebP,
+}
+
+// Bounded-memory animated image, GIF or WebP.
 GIF_Data :: struct {
     encoded: []u8, // owned copy; the decoder reads from it for the stream's life
     delays:  []f32,
     ring:    [GIF_ANIMATION_RING]^render.Image,
     ring_at: [GIF_ANIMATION_RING]int, // frame index resident in each slot, -1 when empty
-    stream:  ^gif.Stream,
-    decoded: int, // frames pulled from the stream so far
+    codec:   Anim_Codec,
+    stream:  rawptr, // ^gif.Stream or ^webp.Stream, by codec
+    decoded: int,    // frames pulled from the stream so far
     width:   int,
     height:  int,
     window:  ^Window,
@@ -27,8 +34,9 @@ load_image_frames :: proc(w: ^Window, encoded: []u8) -> (frames: []Image_Frame, 
     if len(encoded) == 0 do return nil, .Empty_Input
     if len(encoded) > int(max(c.int)) do return nil, .Input_Too_Large
 
-    // stb only animates GIF; anything else decodes as a lone frame.
-    if !_is_gif(encoded) {
+    // Only GIF and WebP animate; anything else decodes as a lone frame.
+    codec, animated := _anim_codec(encoded)
+    if !animated {
         image := load_image_from_bytes(w, encoded) or_return
         single, alloc_err := make([]Image_Frame, 1, w.allocator)
         if alloc_err != nil {
@@ -40,9 +48,9 @@ load_image_frames :: proc(w: ^Window, encoded: []u8) -> (frames: []Image_Frame, 
     }
 
     x, y: c.int
-    stream := gif.open(raw_data(encoded), c.int(len(encoded)), &x, &y)
+    stream := _anim_open(codec, encoded, &x, &y)
     if stream == nil do return nil, .Decode_Failed
-    defer gif.close(stream)
+    defer _anim_close(codec, stream)
 
     width, height := int(x), int(y)
     if width <= 0 || height <= 0 do return nil, .Invalid_Dimensions
@@ -58,7 +66,7 @@ load_image_frames :: proc(w: ^Window, encoded: []u8) -> (frames: []Image_Frame, 
         }
 
         ms := c.int(0)
-        status := gif.next(stream, raw_data(pixels), c.size_t(frame_bytes), &ms)
+        status := _anim_next(codec, stream, pixels, &ms)
         if status != 1 {
             delete(pixels, w.allocator)
             if status < 0 {
@@ -97,7 +105,7 @@ _free_partial_frames :: proc(w: ^Window, frames: []Image_Frame) {
 free_animation :: proc(anim: ^GIF_Data) {
     if anim == nil do return
     w := anim.window
-    if anim.stream != nil do gif.close(anim.stream)
+    _anim_close(anim.codec, anim.stream)
     for img in anim.ring do if img != nil do free_image(w, img)
     delete(anim.encoded, w.allocator)
     delete(anim.delays, w.allocator)
@@ -116,21 +124,22 @@ load_gif_dynamic :: proc(w: ^Window, encoded: []u8) -> (anim: ^GIF_Data, err: Im
     if w == nil do return nil, .Decode_Failed
     if len(encoded) == 0 do return nil, .Empty_Input
     if len(encoded) > int(max(c.int)) do return nil, .Input_Too_Large
-    if !_is_gif(encoded) do return nil, .Decode_Failed
+    codec, animated := _anim_codec(encoded)
+    if !animated do return nil, .Decode_Failed
 
-    count := int(gif.scan(raw_data(encoded), c.int(len(encoded)), nil, 0))
+    count := int(_anim_scan(codec, encoded, nil))
     if count <= 0 do return nil, .Decode_Failed
 
     raw_delays := make([]c.int, count, w.allocator)
     defer delete(raw_delays, w.allocator)
-    gif.scan(raw_data(encoded), c.int(len(encoded)), raw_data(raw_delays), c.int(count))
+    _anim_scan(codec, encoded, raw_delays)
 
     // The decoder reads from this buffer lazily, so it must outlive the caller's.
     owned := make([]u8, len(encoded), w.allocator)
     copy(owned, encoded)
 
     x, y: c.int
-    stream := gif.open(raw_data(owned), c.int(len(owned)), &x, &y)
+    stream := _anim_open(codec, owned, &x, &y)
     if stream == nil {
         delete(owned, w.allocator)
         return nil, .Decode_Failed
@@ -138,13 +147,14 @@ load_gif_dynamic :: proc(w: ^Window, encoded: []u8) -> (anim: ^GIF_Data, err: Im
 
     width, height := int(x), int(y)
     if width <= 0 || height <= 0 || width > max(int) / height / 4 {
-        gif.close(stream)
+        _anim_close(codec, stream)
         delete(owned, w.allocator)
         return nil, .Invalid_Dimensions
     }
 
     anim = new(GIF_Data, w.allocator)
     anim.encoded = owned
+    anim.codec = codec
     anim.stream = stream
     anim.width = width
     anim.height = height
@@ -212,9 +222,14 @@ _ring_find :: proc(anim: ^GIF_Data, frame: int) -> int {
 
 @(private="file")
 _gif_rewind :: proc(anim: ^GIF_Data) -> bool {
-    gif.close(anim.stream)
-    x, y: c.int
-    anim.stream = gif.open(raw_data(anim.encoded), c.int(len(anim.encoded)), &x, &y)
+    switch anim.codec {
+    case .GIF:
+        _anim_close(.GIF, anim.stream)
+        x, y: c.int
+        anim.stream = _anim_open(.GIF, anim.encoded, &x, &y)
+    case .WebP:
+        if anim.stream != nil do webp.rewind((^webp.Stream)(anim.stream))
+    }
     anim.decoded = 0
     for i in 0 ..< GIF_ANIMATION_RING do anim.ring_at[i] = -1
     return anim.stream != nil
@@ -246,7 +261,7 @@ _gif_decode_next :: proc(anim: ^GIF_Data) -> bool {
 
     image := anim.ring[slot]
     ms := c.int(0)
-    if gif.next(anim.stream, raw_data(image.data), c.size_t(frame_bytes), &ms) != 1 {
+    if _anim_next(anim.codec, anim.stream, image.data, &ms) != 1 {
         anim.ring_at[slot] = -1
         if image.texture != render.INVALID_TEXTURE {
             free_image_texture(anim.window, image)
@@ -264,9 +279,60 @@ _gif_decode_next :: proc(anim: ^GIF_Data) -> bool {
     return true
 }
 
+@(private="file")
+_anim_codec :: proc(encoded: []u8) -> (codec: Anim_Codec, ok: bool) {
+    if _is_gif(encoded) do return .GIF, true
+    if _is_webp(encoded) do return .WebP, true
+    return {}, false
+}
+
+@(private="file")
+_anim_scan :: proc(codec: Anim_Codec, encoded: []u8, delays: []c.int) -> c.int {
+    switch codec {
+    case .GIF:  return gif.scan(raw_data(encoded), c.int(len(encoded)), raw_data(delays), c.int(len(delays)))
+    case .WebP: return webp.scan(raw_data(encoded), c.int(len(encoded)), raw_data(delays), c.int(len(delays)))
+    }
+    return -1
+}
+
+@(private="file")
+_anim_open :: proc(codec: Anim_Codec, encoded: []u8, w, h: ^c.int) -> rawptr {
+    switch codec {
+    case .GIF:  return gif.open(raw_data(encoded), c.int(len(encoded)), w, h)
+    case .WebP: return webp.open(raw_data(encoded), c.int(len(encoded)), w, h)
+    }
+    return nil
+}
+
+@(private="file")
+_anim_next :: proc(codec: Anim_Codec, stream: rawptr, dst: []u8, delay_ms: ^c.int) -> c.int {
+    if stream == nil do return -1
+    switch codec {
+    case .GIF:  return gif.next((^gif.Stream)(stream), raw_data(dst), c.size_t(len(dst)), delay_ms)
+    case .WebP: return webp.next((^webp.Stream)(stream), raw_data(dst), c.size_t(len(dst)), delay_ms)
+    }
+    return -1
+}
+
+@(private="file")
+_anim_close :: proc(codec: Anim_Codec, stream: rawptr) {
+    if stream == nil do return
+    switch codec {
+    case .GIF:  gif.close((^gif.Stream)(stream))
+    case .WebP: webp.close((^webp.Stream)(stream))
+    }
+}
+
 @(private)
 _is_gif :: proc(encoded: []u8) -> bool {
     return len(encoded) >= 6 &&
         encoded[0] == 'G' && encoded[1] == 'I' && encoded[2] == 'F' &&
         encoded[3] == '8' && (encoded[4] == '7' || encoded[4] == '9') && encoded[5] == 'a'
+}
+
+@(private)
+_is_webp :: proc(encoded: []u8) -> bool {
+    return len(encoded) >= 12 &&
+        string(encoded[0:4]) == "RIFF" &&
+        string(encoded[8:12]) == "WEBP"
 }
